@@ -728,35 +728,38 @@
 
     function extractTimeline(raw) {
       const rows = [];
-      if (Array.isArray(raw)) {
-        raw.forEach((entry, index) => {
-          const coords = extractCoordinates(entry);
-          if (!coords) {
-            return;
-          }
-          const timestamp = readTimestamp(entry, index);
-          rows.push({
-            originalTimestamp: timestamp.display,
-            numericTimestamp: timestamp.numeric,
-            x: coords.x,
-            y: coords.y,
-            z: coords.z
-          });
+
+      function pushEntry(entry, index, fallbackKey = null) {
+        const coords = extractCoordinates(entry);
+        if (!coords) {
+          return;
+        }
+        const timestamp = readTimestamp(entry, index, fallbackKey);
+        rows.push({
+          originalTimestamp: timestamp.display,
+          numericTimestamp: timestamp.numeric,
+          x: coords.x,
+          y: coords.y,
+          z: coords.z
         });
+      }
+
+      function processArray(array, baseKey = null) {
+        array.forEach((entry, index) => {
+          const fallbackKey = baseKey ? `${baseKey}[${index}]` : null;
+          pushEntry(entry, index, fallbackKey);
+        });
+      }
+
+      if (Array.isArray(raw)) {
+        processArray(raw);
       } else if (raw && typeof raw === 'object') {
         Object.entries(raw).forEach(([key, value], index) => {
-          const coords = extractCoordinates(value);
-          if (!coords) {
+          if (Array.isArray(value)) {
+            processArray(value, key);
             return;
           }
-          const timestamp = readTimestamp(value, index, key);
-          rows.push({
-            originalTimestamp: timestamp.display,
-            numericTimestamp: timestamp.numeric,
-            x: coords.x,
-            y: coords.y,
-            z: coords.z
-          });
+          pushEntry(value, index, key);
         });
       }
       const allNumeric = rows.every((row) => Number.isFinite(row.numericTimestamp));
@@ -815,7 +818,7 @@
     }
 
     function readTimestamp(entry, index, fallbackKey = null) {
-      const candidates = ['timestamp', 'time', 'tick', 'date', 'タイムスタンプ'];
+      const candidates = ['timestamp', 'time', 'tick', 'date', 'step', 'タイムスタンプ'];
       for (const key of candidates) {
         if (entry && Object.prototype.hasOwnProperty.call(entry, key)) {
           const value = entry[key];
