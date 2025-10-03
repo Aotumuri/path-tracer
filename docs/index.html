@@ -35,6 +35,8 @@
     .zoom-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     .zoom-buttons { display: inline-flex; gap: 8px; }
     #zoomDisplay { font-size: 0.9rem; color: #333; }
+    .axis-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 4px; flex-wrap: wrap; font-size: 0.9rem; color: #333; }
+    .axis-toolbar select { padding: 4px 8px; border-radius: 4px; border: 1px solid #bbb; background: #fff; }
     canvas.dragging { cursor: grabbing; }
   </style>
 </head>
@@ -73,6 +75,13 @@
             <button type="button" id="zoomReset">Fit View</button>
           </div>
         </div>
+        <div class="axis-toolbar">
+          <label for="axisMode">Projection</label>
+          <select id="axisMode">
+            <option value="xy">X vs Y</option>
+            <option value="xz">X vs Z</option>
+          </select>
+        </div>
         <div id="details">
           <div class="detail-box" id="trackBox"></div>
           <div class="detail-box" id="timestampBox"></div>
@@ -104,6 +113,7 @@
     const zoomOutButton = document.getElementById('zoomOut');
     const zoomResetButton = document.getElementById('zoomReset');
     const zoomDisplay = document.getElementById('zoomDisplay');
+    const axisModeSelect = document.getElementById('axisMode');
 
     const colorPalette = ['#3498db', '#e67e22', '#9b59b6', '#27ae60', '#e74c3c', '#16a085', '#f39c12', '#8e44ad', '#2c3e50'];
 
@@ -114,6 +124,7 @@
     let animationId = null;
     let isPlaying = false;
     let trackCounter = 0;
+    let axisMode = 'xy';
     const viewState = { zoom: 1, offsetX: 0, offsetY: 0 };
     const minZoom = 0.25;
     const maxZoom = 12;
@@ -153,6 +164,13 @@
 
     zoomResetButton.addEventListener('click', () => {
       resetView();
+    });
+
+    axisModeSelect.value = axisMode;
+    axisModeSelect.addEventListener('change', () => {
+      axisMode = axisModeSelect.value;
+      resetView(true);
+      drawFrame(Number(slider.value));
     });
 
     canvas.addEventListener('wheel', handleWheel, { passive: false });
@@ -547,40 +565,46 @@
       const height = canvas.height - margin * 2;
 
       const bounds = computeBounds(trackHighlights.map((item) => item.track));
-      const spanX = bounds.maxX - bounds.minX || 1;
-      const spanY = bounds.maxY - bounds.minY || 1;
-      const scale = Math.min(width / spanX, height / spanY);
-      const context = { bounds, margin, scale };
+      const spanPrimary = bounds.maxPrimary - bounds.minPrimary || 1;
+      const spanSecondary = bounds.maxSecondary - bounds.minSecondary || 1;
+      const scale = Math.min(width / spanPrimary, height / spanSecondary);
+      const context = {
+        bounds,
+        margin,
+        scale
+      };
 
-      lastRenderContext = context;
+      lastRenderContext = { ...context, axisMode };
 
-      function toCanvas(point) {
-        return worldToCanvas(point, context);
-      }
+      const toCanvas = (offset) => offsetToCanvas(offset, context);
 
       ctx.save();
       ctx.strokeStyle = '#e0e0e0';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
-      const horizontalStart = worldToCanvas({ dx: bounds.minX, dy: 0 }, context);
-      const horizontalEnd = worldToCanvas({ dx: bounds.maxX, dy: 0 }, context);
-      ctx.beginPath();
-      ctx.moveTo(horizontalStart.x, horizontalStart.y);
-      ctx.lineTo(horizontalEnd.x, horizontalEnd.y);
-      ctx.stroke();
-      const verticalStart = worldToCanvas({ dx: 0, dy: bounds.minY }, context);
-      const verticalEnd = worldToCanvas({ dx: 0, dy: bounds.maxY }, context);
-      ctx.beginPath();
-      ctx.moveTo(verticalStart.x, verticalStart.y);
-      ctx.lineTo(verticalEnd.x, verticalEnd.y);
-      ctx.stroke();
+      if (bounds.minSecondary <= 0 && bounds.maxSecondary >= 0) {
+        const horizontalStart = projectedToCanvas(bounds.minPrimary, 0, context);
+        const horizontalEnd = projectedToCanvas(bounds.maxPrimary, 0, context);
+        ctx.beginPath();
+        ctx.moveTo(horizontalStart.x, horizontalStart.y);
+        ctx.lineTo(horizontalEnd.x, horizontalEnd.y);
+        ctx.stroke();
+      }
+      if (bounds.minPrimary <= 0 && bounds.maxPrimary >= 0) {
+        const verticalStart = projectedToCanvas(0, bounds.minSecondary, context);
+        const verticalEnd = projectedToCanvas(0, bounds.maxSecondary, context);
+        ctx.beginPath();
+        ctx.moveTo(verticalStart.x, verticalStart.y);
+        ctx.lineTo(verticalEnd.x, verticalEnd.y);
+        ctx.stroke();
+      }
       ctx.restore();
 
       trackHighlights.forEach(({ track, highlightIndex }) => {
         renderTrack(track, highlightIndex, track.id === activeTrackId, toCanvas);
       });
 
-      const origin = worldToCanvas({ dx: 0, dy: 0 }, context);
+      const origin = projectedToCanvas(0, 0, context);
       ctx.strokeStyle = '#2c3e50';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -592,10 +616,22 @@
     }
 
 
-    function worldToCanvas(point, context) {
-      const baseX = context.margin + (point.dx - context.bounds.minX) * context.scale;
-      const baseY = context.margin + (context.bounds.maxY - point.dy) * context.scale;
+    function projectOffset(offset) {
+      return {
+        primary: offset.dx,
+        secondary: axisMode === 'xz' ? offset.dz : offset.dy
+      };
+    }
+
+    function projectedToCanvas(primary, secondary, context) {
+      const baseX = context.margin + (primary - context.bounds.minPrimary) * context.scale;
+      const baseY = context.margin + (context.bounds.maxSecondary - secondary) * context.scale;
       return applyViewTransform(baseX, baseY);
+    }
+
+    function offsetToCanvas(offset, context) {
+      const projected = projectOffset(offset);
+      return projectedToCanvas(projected.primary, projected.secondary, context);
     }
 
     function applyViewTransform(x, y) {
@@ -651,27 +687,31 @@
     }
 
     function computeBounds(visibleTracks) {
-      let minX = Infinity;
-      let maxX = -Infinity;
-      let minY = Infinity;
-      let maxY = -Infinity;
+      let minPrimary = Infinity;
+      let maxPrimary = -Infinity;
+      let minSecondary = Infinity;
+      let maxSecondary = -Infinity;
+
       visibleTracks.forEach((track) => {
-        track.offsets.forEach((point) => {
-          minX = Math.min(minX, point.dx);
-          maxX = Math.max(maxX, point.dx);
-          minY = Math.min(minY, point.dy);
-          maxY = Math.max(maxY, point.dy);
+        track.offsets.forEach((offset) => {
+          const projected = projectOffset(offset);
+          minPrimary = Math.min(minPrimary, projected.primary);
+          maxPrimary = Math.max(maxPrimary, projected.primary);
+          minSecondary = Math.min(minSecondary, projected.secondary);
+          maxSecondary = Math.max(maxSecondary, projected.secondary);
         });
       });
-      if (!visibleTracks.length || !Number.isFinite(minX)) {
-        minX = maxX = minY = maxY = 0;
+
+      if (!visibleTracks.length || !Number.isFinite(minPrimary) || !Number.isFinite(minSecondary)) {
+        minPrimary = maxPrimary = minSecondary = maxSecondary = 0;
       }
+
       const padding = 0.5;
       return {
-        minX: minX - padding,
-        maxX: maxX + padding,
-        minY: minY - padding,
-        maxY: maxY + padding
+        minPrimary: minPrimary - padding,
+        maxPrimary: maxPrimary + padding,
+        minSecondary: minSecondary - padding,
+        maxSecondary: maxSecondary + padding
       };
     }
 
