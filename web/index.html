@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Coordinate Timeline Viewer</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1b1b1b; background-color: #f7f7f7; }
+    body { margin: 0; padding: 24px; display: flex; flex-direction: column; gap: 16px; min-height: 100vh; box-sizing: border-box; }
+    h1 { margin: 0 0 8px; font-size: 1.6rem; }
+    h2 { margin: 12px 0; font-size: 1.1rem; }
+    p { margin: 0; color: #555; }
+    label { font-weight: 600; display: inline-flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+    .panel { background: white; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); padding: 20px 24px; }
+    .loader-area { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; }
+    .loader-area input[type="file"] { border: 1px solid #ccc; border-radius: 6px; padding: 6px; background: #fafafa; }
+    #error { color: #c0392b; font-weight: 600; margin-top: 12px; }
+    canvas { width: 100%; height: 480px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: grab; }
+    .layout { display: flex; flex-wrap: wrap; gap: 20px; }
+    .left-col { flex: 2 1 520px; display: flex; flex-direction: column; gap: 16px; }
+    .right-col { flex: 1 1 260px; min-width: 240px; background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 12px 16px; max-height: 560px; overflow-y: auto; }
+    .controls { display: flex; align-items: center; gap: 12px; }
+    .controls input[type="range"] { flex: 1; }
+    button { padding: 6px 12px; font-size: 0.95rem; border-radius: 6px; cursor: pointer; border: 1px solid #bbb; background: #fafafa; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #details { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+    .detail-box { background: #f1f1f1; border-radius: 6px; padding: 10px; font-size: 0.92rem; line-height: 1.4; }
+    .track-row { display: grid; grid-template-columns: auto auto 16px 1fr; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e5e5e5; }
+    .track-row:last-child { border-bottom: none; }
+    .track-row input[type="checkbox"],
+    .track-row input[type="radio"] { width: 16px; height: 16px; }
+    .track-swatch { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.2); }
+    .track-name { font-weight: 600; font-size: 0.95rem; }
+    .track-meta { grid-column: 2 / span 3; font-size: 0.8rem; color: #666; }
+    .note { font-size: 0.85rem; color: #777; margin-top: 8px; }
+    .zoom-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .zoom-buttons { display: inline-flex; gap: 8px; }
+    #zoomDisplay { font-size: 0.9rem; color: #333; }
+    canvas.dragging { cursor: grabbing; }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Coordinate Timeline Viewer</h1>
+    <p>Select one or more JSON files containing timestamped coordinates (x, y, z). The first point in each file is treated as the origin at (0, 0, 0).</p>
+    <div class="loader-area">
+      <label>
+        Load JSON files
+        <input type="file" id="fileInput" accept="application/json" multiple>
+      </label>
+      <label>
+        Load JSON folder
+        <input type="file" id="folderInput" accept="application/json" webkitdirectory multiple>
+      </label>
+    </div>
+    <p class="note">The folder picker works best in Chromium-based browsers (Chrome, Edge, Arc). Safari and Firefox may not fully support automatic folder loading.</p>
+    <div id="error"></div>
+  </div>
+
+  <div id="viewer" class="panel" style="display:none;">
+    <div class="layout">
+      <div class="left-col">
+        <canvas id="plot" width="960" height="480"></canvas>
+        <div class="controls">
+          <label for="position">Frame</label>
+          <input type="range" id="position" min="0" max="0" value="0" step="1" disabled>
+          <button id="playPause" disabled>Play</button>
+        </div>
+        <div class="zoom-toolbar">
+          <span id="zoomDisplay">Zoom: 100%</span>
+          <div class="zoom-buttons">
+            <button type="button" id="zoomIn">Zoom In</button>
+            <button type="button" id="zoomOut">Zoom Out</button>
+            <button type="button" id="zoomReset">Fit View</button>
+          </div>
+        </div>
+        <div id="details">
+          <div class="detail-box" id="trackBox"></div>
+          <div class="detail-box" id="timestampBox"></div>
+          <div class="detail-box" id="absoluteBox"></div>
+          <div class="detail-box" id="relativeBox"></div>
+        </div>
+      </div>
+      <div class="right-col">
+        <h2>Tracks</h2>
+        <div id="trackList"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const folderInput = document.getElementById('folderInput');
+    const errorBox = document.getElementById('error');
+    const viewer = document.getElementById('viewer');
+    const canvas = document.getElementById('plot');
+    const ctx = canvas.getContext('2d');
+    const slider = document.getElementById('position');
+    const playPause = document.getElementById('playPause');
+    const trackBox = document.getElementById('trackBox');
+    const timestampBox = document.getElementById('timestampBox');
+    const absoluteBox = document.getElementById('absoluteBox');
+    const relativeBox = document.getElementById('relativeBox');
+    const zoomInButton = document.getElementById('zoomIn');
+    const zoomOutButton = document.getElementById('zoomOut');
+    const zoomResetButton = document.getElementById('zoomReset');
+    const zoomDisplay = document.getElementById('zoomDisplay');
+
+    const colorPalette = ['#3498db', '#e67e22', '#9b59b6', '#27ae60', '#e74c3c', '#16a085', '#f39c12', '#8e44ad', '#2c3e50'];
+
+    let tracks = [];
+    let selectedTrackIds = new Set();
+    let activeTrackId = null;
+    let globalTimeline = [];
+    let animationId = null;
+    let isPlaying = false;
+    let trackCounter = 0;
+    const viewState = { zoom: 1, offsetX: 0, offsetY: 0 };
+    const minZoom = 0.25;
+    const maxZoom = 12;
+    let lastRenderContext = null;
+    let isPanning = false;
+    let panPointerId = null;
+    let panStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
+
+    fileInput.addEventListener('change', (event) => {
+      handleFileSelection(event.target.files);
+    });
+
+    folderInput.addEventListener('change', (event) => {
+      handleFileSelection(event.target.files);
+    });
+
+    slider.addEventListener('input', (event) => {
+      stopPlayback(false);
+      drawFrame(Number(event.target.value));
+    });
+
+    playPause.addEventListener('click', () => {
+      if (isPlaying) {
+        stopPlayback(false);
+      } else {
+        startPlayback();
+      }
+    });
+
+    zoomInButton.addEventListener('click', () => {
+      applyZoom(1.2, canvas.width / 2, canvas.height / 2);
+    });
+
+    zoomOutButton.addEventListener('click', () => {
+      applyZoom(1 / 1.2, canvas.width / 2, canvas.height / 2);
+    });
+
+    zoomResetButton.addEventListener('click', () => {
+      resetView();
+    });
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    canvas.addEventListener('pointermove', handlePointerMove);
+    canvas.addEventListener('pointerup', handlePointerUp);
+    canvas.addEventListener('pointerleave', handlePointerUp);
+    canvas.addEventListener('pointercancel', handlePointerUp);
+
+    function handleWheel(event) {
+      if (!globalTimeline.length) {
+        return;
+      }
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width || 1;
+      const scaleY = canvas.height / rect.height || 1;
+      const focusX = (event.clientX - rect.left) * scaleX;
+      const focusY = (event.clientY - rect.top) * scaleY;
+      const factor = event.deltaY < 0 ? 1.1 : 0.9;
+      applyZoom(factor, focusX, focusY);
+    }
+
+    function handlePointerDown(event) {
+      if (event.button !== 0 || !globalTimeline.length) {
+        return;
+      }
+      stopPlayback(false);
+      isPanning = true;
+      panPointerId = event.pointerId;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width || 1;
+      const scaleY = canvas.height / rect.height || 1;
+      panStart = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        offsetX: viewState.offsetX,
+        offsetY: viewState.offsetY,
+        scaleX,
+        scaleY
+      };
+      canvas.setPointerCapture(event.pointerId);
+      canvas.classList.add('dragging');
+    }
+
+    function handlePointerMove(event) {
+      if (!isPanning || event.pointerId !== panPointerId) {
+        return;
+      }
+      const dx = (event.clientX - panStart.clientX) * panStart.scaleX;
+      const dy = (event.clientY - panStart.clientY) * panStart.scaleY;
+      viewState.offsetX = panStart.offsetX + dx;
+      viewState.offsetY = panStart.offsetY + dy;
+      drawFrame(Number(slider.value));
+    }
+
+    function handlePointerUp(event) {
+      if (!isPanning) {
+        return;
+      }
+      if (panPointerId !== null && event.pointerId !== panPointerId) {
+        return;
+      }
+      if (panPointerId !== null) {
+        try {
+          canvas.releasePointerCapture(panPointerId);
+        } catch (err) {
+          // ignore release failures
+        }
+      }
+      isPanning = false;
+      panPointerId = null;
+      canvas.classList.remove('dragging');
+    }
+
+    function applyZoom(factor, focusX = canvas.width / 2, focusY = canvas.height / 2) {
+      if (!globalTimeline.length) {
+        return;
+      }
+      const previousZoom = viewState.zoom;
+      const nextZoom = Math.min(Math.max(previousZoom * factor, minZoom), maxZoom);
+      if (nextZoom === previousZoom) {
+        return;
+      }
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const unscaledX = (focusX - centerX - viewState.offsetX) / previousZoom + centerX;
+      const unscaledY = (focusY - centerY - viewState.offsetY) / previousZoom + centerY;
+      viewState.zoom = nextZoom;
+      viewState.offsetX = focusX - (unscaledX - centerX) * viewState.zoom - centerX;
+      viewState.offsetY = focusY - (unscaledY - centerY) * viewState.zoom - centerY;
+      drawFrame(Number(slider.value));
+    }
+
+    function resetView(skipRedraw = false) {
+      viewState.zoom = 1;
+      viewState.offsetX = 0;
+      viewState.offsetY = 0;
+      if (skipRedraw) {
+        updateZoomDisplay();
+        return;
+      }
+      drawFrame(Number(slider.value));
+    }
+
+    function updateZoomDisplay() {
+      if (!zoomDisplay) {
+        return;
+      }
+      const percent = Math.round(viewState.zoom * 100);
+      zoomDisplay.textContent = `Zoom: ${percent}%`;
+    }
+
+    async function handleFileSelection(fileList) {
+      stopPlayback();
+      errorBox.textContent = '';
+      if (!fileList || !fileList.length) {
+        return;
+      }
+
+      const files = Array.from(fileList).filter((file) => file.name.toLowerCase().endsWith('.json'));
+      if (!files.length) {
+        errorBox.textContent = 'No JSON files found in the selection.';
+        return;
+      }
+
+      const parsedTracks = [];
+      const failed = [];
+
+      for (const file of files) {
+        try {
+          const text = await file.text();
+          const raw = JSON.parse(text);
+          const timeline = extractTimeline(raw);
+          if (!timeline.length) {
+            failed.push(file.name + ' (no coordinates)');
+            continue;
+          }
+          parsedTracks.push({
+            id: nextTrackId(),
+            name: file.webkitRelativePath || file.name,
+            timeline,
+            offsets: buildOffsets(timeline)
+          });
+        } catch (err) {
+          console.error('Failed to parse', file.name, err);
+          failed.push(file.name + ' (parse error)');
+        }
+      }
+
+      if (!parsedTracks.length) {
+        viewer.style.display = 'none';
+        errorBox.textContent = 'Could not load any of the selected files.';
+        return;
+      }
+
+      tracks = parsedTracks.map((track, index) => ({
+        ...track,
+        color: colorPalette[index % colorPalette.length]
+      }));
+      selectedTrackIds = new Set(tracks.map((track) => track.id));
+      activeTrackId = tracks[0].id;
+      globalTimeline = rebuildGlobalTimeline(tracks);
+      resetView(true);
+      slider.value = 0;
+
+      refreshTrackList();
+      updateControls();
+      drawFrame(0);
+      viewer.style.display = 'block';
+
+      if (failed.length) {
+        errorBox.textContent = `Skipped files: ${failed.join(', ')}`;
+      }
+    }
+
+    function nextTrackId() {
+      trackCounter += 1;
+      return `track-${trackCounter}`;
+    }
+
+    function refreshTrackList() {
+      trackList.innerHTML = '';
+      tracks.forEach((track) => {
+        const row = document.createElement('div');
+        row.className = 'track-row';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selectedTrackIds.has(track.id);
+        checkbox.addEventListener('change', () => {
+          handleTrackToggle(track.id, checkbox.checked);
+        });
+
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'activeTrack';
+        radio.checked = track.id === activeTrackId;
+        radio.addEventListener('change', () => {
+          if (radio.checked) {
+            setActiveTrack(track.id);
+          }
+        });
+
+        const swatch = document.createElement('span');
+        swatch.className = 'track-swatch';
+        swatch.style.backgroundColor = track.color;
+
+        const title = document.createElement('span');
+        title.className = 'track-name';
+        title.textContent = track.name;
+
+        const meta = document.createElement('div');
+        meta.className = 'track-meta';
+        meta.textContent = `${track.timeline.length} points`;
+
+        row.appendChild(checkbox);
+        row.appendChild(radio);
+        row.appendChild(swatch);
+        row.appendChild(title);
+        row.appendChild(meta);
+        trackList.appendChild(row);
+      });
+    }
+
+    function handleTrackToggle(trackId, isChecked) {
+      if (isChecked) {
+        selectedTrackIds.add(trackId);
+      } else {
+        selectedTrackIds.delete(trackId);
+        if (!selectedTrackIds.size) {
+          selectedTrackIds.add(trackId);
+          refreshTrackList();
+          return;
+        }
+        if (trackId === activeTrackId) {
+          const replacement = tracks.find((track) => selectedTrackIds.has(track.id));
+          if (replacement) {
+            setActiveTrack(replacement.id);
+            return;
+          }
+        }
+      }
+      drawFrame(Number(slider.value));
+    }
+
+    function setActiveTrack(trackId) {
+      if (activeTrackId === trackId) {
+        return;
+      }
+      activeTrackId = trackId;
+      if (!selectedTrackIds.has(trackId)) {
+        selectedTrackIds.add(trackId);
+      }
+      stopPlayback(false);
+      refreshTrackList();
+      updateControls();
+      drawFrame(Number(slider.value));
+    }
+
+    function getActiveTrack() {
+      return tracks.find((track) => track.id === activeTrackId) || null;
+    }
+
+    function updateControls() {
+      const totalFrames = globalTimeline.length;
+      if (!totalFrames) {
+        slider.disabled = true;
+        slider.min = 0;
+        slider.max = 0;
+        slider.value = 0;
+        playPause.disabled = true;
+        return;
+      }
+      slider.disabled = false;
+      slider.min = 0;
+      slider.max = Math.max(totalFrames - 1, 0);
+      const currentValue = Number(slider.value);
+      slider.value = Number.isFinite(currentValue) ? Math.min(Math.max(currentValue, 0), slider.max) : 0;
+      playPause.disabled = totalFrames < 2;
+    }
+
+    function startPlayback() {
+      if (globalTimeline.length < 2) {
+        return;
+      }
+      isPlaying = true;
+      playPause.textContent = 'Pause';
+      const startIndex = Number(slider.value);
+      animateFrom(startIndex);
+    }
+
+    function animateFrom(index) {
+      drawFrame(index);
+      slider.value = index;
+      if (!isPlaying) {
+        return;
+      }
+      if (!globalTimeline.length) {
+        stopPlayback();
+        return;
+      }
+      const next = (index + 1) % globalTimeline.length;
+      const delay = computeDelay(index, next);
+      animationId = setTimeout(() => animateFrom(next), delay);
+    }
+
+    function stopPlayback(resetButton = true) {
+      if (animationId !== null) {
+        clearTimeout(animationId);
+        animationId = null;
+      }
+      isPlaying = false;
+      if (resetButton) {
+        playPause.textContent = 'Play';
+      }
+    }
+
+    function computeDelay(currentIndex, nextIndex) {
+      if (!globalTimeline.length) {
+        return 500;
+      }
+      const current = globalTimeline[currentIndex];
+      const next = globalTimeline[nextIndex];
+      const delta = Math.abs(next - current);
+      if (!Number.isFinite(delta) || delta === 0) {
+        return 500;
+      }
+      return Math.min(Math.max(delta, 200), 3000);
+    }
+
+    function getComparableTimestamp(entry, fallbackIndex) {
+      if (!entry) {
+        return fallbackIndex;
+      }
+      return Number.isFinite(entry.numericTimestamp) ? entry.numericTimestamp : fallbackIndex;
+    }
+
+    function drawFrame(rawIndex) {
+      const totalFrames = globalTimeline.length;
+      if (!totalFrames) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        updateDetails(null, null, null, null);
+        playPause.textContent = 'Play';
+        updateZoomDisplay();
+        return;
+      }
+
+      const clampedIndex = Math.min(Math.max(rawIndex, 0), totalFrames - 1);
+      slider.value = clampedIndex;
+      const targetTimestamp = globalTimeline[clampedIndex];
+
+      const visibleTracks = tracks.filter((track) => selectedTrackIds.has(track.id));
+      const active = getActiveTrack();
+
+      if (!visibleTracks.length || !active) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        updateDetails(null, null, null, null);
+        playPause.textContent = isPlaying ? 'Pause' : 'Play';
+        updateZoomDisplay();
+        return;
+      }
+
+      const trackHighlights = visibleTracks.map((track) => {
+        const highlightIndex = findNearestIndex(track, targetTimestamp, clampedIndex);
+        return { track, highlightIndex };
+      });
+
+      renderScene(trackHighlights);
+
+      const activeHighlight = trackHighlights.find((item) => item.track.id === activeTrackId)
+        || { track: active, highlightIndex: findNearestIndex(active, targetTimestamp, clampedIndex) };
+
+      const safeIndex = Math.min(Math.max(activeHighlight.highlightIndex, 0), active.timeline.length - 1);
+      const entry = active.timeline[safeIndex];
+      const offset = active.offsets[safeIndex];
+      updateDetails(active, safeIndex, entry, offset);
+
+      playPause.textContent = isPlaying ? 'Pause' : 'Play';
+      updateZoomDisplay();
+    }
+
+    function renderScene(trackHighlights) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!trackHighlights.length) {
+        lastRenderContext = null;
+        return;
+      }
+
+      const margin = 40;
+      const width = canvas.width - margin * 2;
+      const height = canvas.height - margin * 2;
+
+      const bounds = computeBounds(trackHighlights.map((item) => item.track));
+      const spanX = bounds.maxX - bounds.minX || 1;
+      const spanY = bounds.maxY - bounds.minY || 1;
+      const scale = Math.min(width / spanX, height / spanY);
+      const context = { bounds, margin, scale };
+
+      lastRenderContext = context;
+
+      function toCanvas(point) {
+        return worldToCanvas(point, context);
+      }
+
+      ctx.save();
+      ctx.strokeStyle = '#e0e0e0';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      const horizontalStart = worldToCanvas({ dx: bounds.minX, dy: 0 }, context);
+      const horizontalEnd = worldToCanvas({ dx: bounds.maxX, dy: 0 }, context);
+      ctx.beginPath();
+      ctx.moveTo(horizontalStart.x, horizontalStart.y);
+      ctx.lineTo(horizontalEnd.x, horizontalEnd.y);
+      ctx.stroke();
+      const verticalStart = worldToCanvas({ dx: 0, dy: bounds.minY }, context);
+      const verticalEnd = worldToCanvas({ dx: 0, dy: bounds.maxY }, context);
+      ctx.beginPath();
+      ctx.moveTo(verticalStart.x, verticalStart.y);
+      ctx.lineTo(verticalEnd.x, verticalEnd.y);
+      ctx.stroke();
+      ctx.restore();
+
+      trackHighlights.forEach(({ track, highlightIndex }) => {
+        renderTrack(track, highlightIndex, track.id === activeTrackId, toCanvas);
+      });
+
+      const origin = worldToCanvas({ dx: 0, dy: 0 }, context);
+      ctx.strokeStyle = '#2c3e50';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(origin.x, origin.y, 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#2c3e50';
+      ctx.font = '12px system-ui';
+      ctx.fillText('origin', origin.x + 10, origin.y - 8);
+    }
+
+
+    function worldToCanvas(point, context) {
+      const baseX = context.margin + (point.dx - context.bounds.minX) * context.scale;
+      const baseY = context.margin + (context.bounds.maxY - point.dy) * context.scale;
+      return applyViewTransform(baseX, baseY);
+    }
+
+    function applyViewTransform(x, y) {
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const zoomedX = (x - centerX) * viewState.zoom + centerX + viewState.offsetX;
+      const zoomedY = (y - centerY) * viewState.zoom + centerY + viewState.offsetY;
+      return { x: zoomedX, y: zoomedY };
+    }
+
+    function renderTrack(track, highlightIndex, isActive, toCanvas) {
+      const offsets = track.offsets;
+      if (!offsets.length) {
+        return;
+      }
+
+      ctx.save();
+      ctx.strokeStyle = track.color;
+      ctx.lineWidth = isActive ? 2.5 : 1.8;
+      ctx.globalAlpha = isActive ? 1 : 0.6;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      offsets.forEach((point, idx) => {
+        const { x, y } = toCanvas(point);
+        if (idx === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+
+      ctx.fillStyle = track.color;
+      ctx.globalAlpha = isActive ? 0.9 : 0.5;
+      offsets.forEach((point) => {
+        const { x, y } = toCanvas(point);
+        ctx.beginPath();
+        ctx.arc(x, y, isActive ? 4 : 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      const safeIndex = Math.min(Math.max(highlightIndex, 0), offsets.length - 1);
+      const highlightPoint = offsets[safeIndex];
+      if (highlightPoint) {
+        const { x, y } = toCanvas(highlightPoint);
+        ctx.fillStyle = isActive ? '#e74c3c' : '#2c3e50';
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, isActive ? 7 : 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function computeBounds(visibleTracks) {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      visibleTracks.forEach((track) => {
+        track.offsets.forEach((point) => {
+          minX = Math.min(minX, point.dx);
+          maxX = Math.max(maxX, point.dx);
+          minY = Math.min(minY, point.dy);
+          maxY = Math.max(maxY, point.dy);
+        });
+      });
+      if (!visibleTracks.length || !Number.isFinite(minX)) {
+        minX = maxX = minY = maxY = 0;
+      }
+      const padding = 0.5;
+      return {
+        minX: minX - padding,
+        maxX: maxX + padding,
+        minY: minY - padding,
+        maxY: maxY + padding
+      };
+    }
+
+    function findNearestIndex(track, targetTimestamp, fallbackIndex) {
+      if (!track.timeline.length) {
+        return 0;
+      }
+      if (!Number.isFinite(targetTimestamp)) {
+        return Math.min(fallbackIndex, track.timeline.length - 1);
+      }
+      let bestIndex = 0;
+      let bestDelta = Infinity;
+      track.timeline.forEach((entry, idx) => {
+        const candidate = getComparableTimestamp(entry, idx);
+        const delta = Math.abs(candidate - targetTimestamp);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestIndex = idx;
+        }
+      });
+      return bestIndex;
+    }
+
+    function updateDetails(track, index, entry, offset) {
+      if (!track || !entry || !offset) {
+        trackBox.textContent = 'Track: (none)';
+        timestampBox.textContent = 'Timestamp: -';
+        absoluteBox.textContent = 'Absolute: -';
+        relativeBox.textContent = 'Offset: -';
+        return;
+      }
+      trackBox.textContent = `Track: ${track.name} (${track.timeline.length} points)`;
+      timestampBox.textContent = `Timestamp: ${entry.originalTimestamp}`;
+      absoluteBox.textContent = `Absolute: x=${entry.x.toFixed(2)}, y=${entry.y.toFixed(2)}, z=${entry.z.toFixed(2)}`;
+      relativeBox.textContent = `Offset: dx=${offset.dx.toFixed(2)}, dy=${offset.dy.toFixed(2)}, dz=${offset.dz.toFixed(2)}`;
+    }
+
+    function rebuildGlobalTimeline(trackList) {
+      const moments = new Set();
+      let fallbackLength = 0;
+      trackList.forEach((track) => {
+        fallbackLength = Math.max(fallbackLength, track.timeline.length);
+        track.timeline.forEach((entry, idx) => {
+          const value = getComparableTimestamp(entry, idx);
+          moments.add(value);
+        });
+      });
+      const sorted = Array.from(moments).filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+      if (sorted.length) {
+        return sorted;
+      }
+      return Array.from({ length: fallbackLength }, (_, idx) => idx);
+    }
+
+    function extractTimeline(raw) {
+      const rows = [];
+      if (Array.isArray(raw)) {
+        raw.forEach((entry, index) => {
+          const coords = extractCoordinates(entry);
+          if (!coords) {
+            return;
+          }
+          const timestamp = readTimestamp(entry, index);
+          rows.push({
+            originalTimestamp: timestamp.display,
+            numericTimestamp: timestamp.numeric,
+            x: coords.x,
+            y: coords.y,
+            z: coords.z
+          });
+        });
+      } else if (raw && typeof raw === 'object') {
+        Object.entries(raw).forEach(([key, value], index) => {
+          const coords = extractCoordinates(value);
+          if (!coords) {
+            return;
+          }
+          const timestamp = readTimestamp(value, index, key);
+          rows.push({
+            originalTimestamp: timestamp.display,
+            numericTimestamp: timestamp.numeric,
+            x: coords.x,
+            y: coords.y,
+            z: coords.z
+          });
+        });
+      }
+      const allNumeric = rows.every((row) => Number.isFinite(row.numericTimestamp));
+      if (allNumeric) {
+        rows.sort((a, b) => a.numericTimestamp - b.numericTimestamp);
+      }
+      return rows;
+    }
+
+    function extractCoordinates(entry) {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const direct = pickAxes(entry);
+      if (direct) {
+        return direct;
+      }
+      const coordinateWrappers = ['coordinate', 'coordinates', 'coords', 'pos', 'position', 'location', 'loc', 'point', '座標'];
+      for (const key of coordinateWrappers) {
+        if (entry[key] && typeof entry[key] === 'object') {
+          const nested = pickAxes(entry[key]);
+          if (nested) {
+            return nested;
+          }
+        }
+      }
+      return null;
+    }
+
+    function pickAxes(candidate) {
+      if (!candidate || typeof candidate !== 'object') {
+        return null;
+      }
+      const x = readAxis(candidate, ['x', 'X']);
+      const y = readAxis(candidate, ['y', 'Y']);
+      const z = readAxis(candidate, ['z', 'Z']);
+      if ([x, y, z].every((value) => Number.isFinite(value))) {
+        return { x, y, z };
+      }
+      return null;
+    }
+
+    function readAxis(obj, keys) {
+      for (const key of keys) {
+        if (typeof obj[key] === 'number') {
+          return obj[key];
+        }
+        if (typeof obj[key] === 'string') {
+          const numeric = Number(obj[key]);
+          if (Number.isFinite(numeric)) {
+            return numeric;
+          }
+        }
+      }
+      return NaN;
+    }
+
+    function readTimestamp(entry, index, fallbackKey = null) {
+      const candidates = ['timestamp', 'time', 'tick', 'date', 'タイムスタンプ'];
+      for (const key of candidates) {
+        if (entry && Object.prototype.hasOwnProperty.call(entry, key)) {
+          const value = entry[key];
+          if (Number.isFinite(Number(value))) {
+            return { display: String(value), numeric: Number(value) };
+          }
+          return { display: String(value), numeric: index };
+        }
+      }
+      if (fallbackKey !== null) {
+        if (Number.isFinite(Number(fallbackKey))) {
+          return { display: fallbackKey, numeric: Number(fallbackKey) };
+        }
+        return { display: fallbackKey, numeric: index };
+      }
+      return { display: `#${index}`, numeric: index };
+    }
+
+    function buildOffsets(rows) {
+      const [first] = rows;
+      return rows.map((row) => ({
+        dx: row.x - first.x,
+        dy: row.y - first.y,
+        dz: row.z - first.z
+      }));
+    }
+  </script>
+</body>
+</html>
