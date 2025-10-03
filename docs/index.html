@@ -115,7 +115,22 @@
     const zoomDisplay = document.getElementById('zoomDisplay');
     const axisModeSelect = document.getElementById('axisMode');
 
-    const colorPalette = ['#3498db', '#e67e22', '#9b59b6', '#27ae60', '#e74c3c', '#16a085', '#f39c12', '#8e44ad', '#2c3e50'];
+    const colorCache = new Map();
+    const goldenAngle = 137.508;
+    const saturationCycle = [70, 62, 78, 68, 74];
+    const lightnessCycle = [52, 46, 58, 48, 55];
+
+    function getTrackColor(index, key) {
+      if (colorCache.has(key)) {
+        return colorCache.get(key);
+      }
+      const hue = (index * goldenAngle) % 360;
+      const saturation = saturationCycle[index % saturationCycle.length];
+      const lightness = lightnessCycle[index % lightnessCycle.length];
+      const color = `hsl(${hue.toFixed(1)}, ${saturation}%, ${lightness}%)`;
+      colorCache.set(key, color);
+      return color;
+    }
 
     let tracks = [];
     let selectedTrackIds = new Set();
@@ -327,9 +342,10 @@
         return;
       }
 
+      colorCache.clear();
       tracks = parsedTracks.map((track, index) => ({
         ...track,
-        color: colorPalette[index % colorPalette.length]
+        color: getTrackColor(index, track.name)
       }));
       selectedTrackIds = new Set(tracks.map((track) => track.id));
       activeTrackId = tracks[0].id;
