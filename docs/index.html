@@ -351,6 +351,7 @@
       selectedTrackIds = new Set(tracks.map((track) => track.id));
       activeTrackId = tracks[0].id;
       globalTimeline = rebuildGlobalTimeline(tracks);
+      markTimelineCoverage();
       resetView(true);
       slider.value = 0;
 
@@ -402,7 +403,8 @@
 
         const meta = document.createElement('div');
         meta.className = 'track-meta';
-        meta.textContent = `${track.timeline.length} points`;
+        const covers = track.endsEarly ? 'full timeline: false' : 'full timeline: true';
+        meta.textContent = `${track.timeline.length} points • ${covers}`;
 
         row.appendChild(checkbox);
         row.appendChild(radio);
@@ -556,7 +558,7 @@
         return { track, highlightIndex };
       });
 
-      renderScene(trackHighlights);
+      renderScene(trackHighlights, targetTimestamp, clampedIndex);
 
       const activeHighlight = trackHighlights.find((item) => item.track.id === activeTrackId)
         || { track: active, highlightIndex: findNearestIndex(active, targetTimestamp, clampedIndex) };
@@ -570,7 +572,7 @@
       updateZoomDisplay();
     }
 
-    function renderScene(trackHighlights) {
+    function renderScene(trackHighlights, targetTimestamp, globalIndex) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (!trackHighlights.length) {
         lastRenderContext = null;
@@ -616,7 +618,7 @@
       ctx.restore();
 
       trackHighlights.forEach(({ track, highlightIndex }) => {
-        renderTrack(track, highlightIndex, track.id === activeTrackId, context);
+        renderTrack(track, highlightIndex, track.id === activeTrackId, context, targetTimestamp, globalIndex);
       });
 
       const origin = projectedToCanvas(0, 0, context);
@@ -664,7 +666,7 @@
       ctx.transform(baseScale, 0, 0, -baseScale, translateX, translateY);
     }
 
-    function renderTrack(track, highlightIndex, isActive, context) {
+    function renderTrack(track, highlightIndex, isActive, context, targetTimestamp, globalIndex) {
       const projection = track.projections?.[axisMode];
       if (!projection || !projection.points.length) {
         return;
@@ -689,12 +691,30 @@
       }
       const { x, y } = projectedToCanvas(highlightPoint.primary, highlightPoint.secondary, context);
       ctx.save();
-      ctx.fillStyle = isActive ? '#e74c3c' : '#2c3e50';
+      const ended = hasTrackEndedAt(track, targetTimestamp, globalIndex);
+      ctx.fillStyle = ended ? '#f1c40f' : (isActive ? '#e74c3c' : '#2c3e50');
       ctx.globalAlpha = 1;
       ctx.beginPath();
       ctx.arc(x, y, isActive ? 7 : 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+    }
+
+    function hasTrackEndedAt(track, targetTimestamp, globalIndex) {
+      const length = track.timeline.length;
+      if (!length) {
+        return true;
+      }
+      const lastIndex = length - 1;
+      if (globalIndex <= lastIndex) {
+        const numericTarget = Number(targetTimestamp);
+        const numericLast = Number(getComparableTimestamp(track.timeline[lastIndex], lastIndex));
+        if (Number.isFinite(numericTarget) && Number.isFinite(numericLast)) {
+          return numericTarget > numericLast;
+        }
+        return false;
+      }
+      return true;
     }
 
     function computeBounds(visibleTracks) {
@@ -756,10 +776,37 @@
         relativeBox.textContent = 'Offset: -';
         return;
       }
-      trackBox.textContent = `Track: ${track.name} (${track.timeline.length} points)`;
+      const coverageLabel = track.endsEarly ? 'full timeline: false' : 'full timeline: true';
+      trackBox.textContent = `Track: ${track.name} (${track.timeline.length} points, ${coverageLabel})`;
       timestampBox.textContent = `Timestamp: ${entry.originalTimestamp}`;
       absoluteBox.textContent = `Absolute: x=${entry.x.toFixed(2)}, y=${entry.y.toFixed(2)}, z=${entry.z.toFixed(2)}`;
       relativeBox.textContent = `Offset: dx=${offset.dx.toFixed(2)}, dy=${offset.dy.toFixed(2)}, dz=${offset.dz.toFixed(2)}`;
+    }
+
+    function markTimelineCoverage() {
+      const globalLength = globalTimeline.length;
+      const globalLast = globalLength ? globalTimeline[globalLength - 1] : null;
+      const numericGlobalLast = Number(globalLast);
+      const hasNumericGlobal = Number.isFinite(numericGlobalLast);
+
+      tracks.forEach((track) => {
+        const lastIndex = track.timeline.length - 1;
+        if (lastIndex < 0) {
+          track.endsEarly = true;
+          return;
+        }
+        if (!globalLength) {
+          track.endsEarly = false;
+          return;
+        }
+        const lastComparable = getComparableTimestamp(track.timeline[lastIndex], lastIndex);
+        const numericLast = Number(lastComparable);
+        let endsEarly = track.timeline.length < globalLength;
+        if (!endsEarly && hasNumericGlobal && Number.isFinite(numericLast)) {
+          endsEarly = numericLast < numericGlobalLast;
+        }
+        track.endsEarly = endsEarly;
+      });
     }
 
     function rebuildGlobalTimeline(trackList) {
