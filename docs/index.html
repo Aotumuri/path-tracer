@@ -345,6 +345,7 @@
       colorCache.clear();
       tracks = parsedTracks.map((track, index) => ({
         ...track,
+        projections: buildProjections(track.offsets),
         color: getTrackColor(index, track.name)
       }));
       selectedTrackIds = new Set(tracks.map((track) => track.id));
@@ -592,8 +593,6 @@
 
       lastRenderContext = { ...context, axisMode };
 
-      const toCanvas = (offset) => offsetToCanvas(offset, context);
-
       ctx.save();
       ctx.strokeStyle = '#e0e0e0';
       ctx.lineWidth = 1;
@@ -617,7 +616,7 @@
       ctx.restore();
 
       trackHighlights.forEach(({ track, highlightIndex }) => {
-        renderTrack(track, highlightIndex, track.id === activeTrackId, toCanvas);
+        renderTrack(track, highlightIndex, track.id === activeTrackId, context);
       });
 
       const origin = projectedToCanvas(0, 0, context);
@@ -645,11 +644,6 @@
       return applyViewTransform(baseX, baseY);
     }
 
-    function offsetToCanvas(offset, context) {
-      const projected = projectOffset(offset);
-      return projectedToCanvas(projected.primary, projected.secondary, context);
-    }
-
     function applyViewTransform(x, y) {
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
@@ -658,47 +652,48 @@
       return { x: zoomedX, y: zoomedY };
     }
 
-    function renderTrack(track, highlightIndex, isActive, toCanvas) {
-      const offsets = track.offsets;
-      if (!offsets.length) {
+    function applyPathTransform(context) {
+      const baseScale = context.scale || 1;
+      const translateX = context.margin - context.bounds.minPrimary * baseScale;
+      const translateY = context.margin + context.bounds.maxSecondary * baseScale;
+
+      ctx.translate(viewState.offsetX, viewState.offsetY);
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.scale(viewState.zoom, viewState.zoom);
+      ctx.translate(-canvas.width / 2, -canvas.height / 2);
+      ctx.transform(baseScale, 0, 0, -baseScale, translateX, translateY);
+    }
+
+    function renderTrack(track, highlightIndex, isActive, context) {
+      const projection = track.projections?.[axisMode];
+      if (!projection || !projection.points.length) {
         return;
       }
 
       ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      applyPathTransform(context);
       ctx.strokeStyle = track.color;
-      ctx.lineWidth = isActive ? 2.5 : 1.8;
       ctx.globalAlpha = isActive ? 1 : 0.6;
       ctx.lineJoin = 'round';
-      ctx.beginPath();
-      offsets.forEach((point, idx) => {
-        const { x, y } = toCanvas(point);
-        if (idx === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      });
-      ctx.stroke();
+      const lineWidthBase = isActive ? 2.5 : 1.8;
+      const scaleFactor = context.scale * viewState.zoom || 1;
+      ctx.lineWidth = lineWidthBase / scaleFactor;
+      ctx.stroke(projection.path);
+      ctx.restore();
 
-      ctx.fillStyle = track.color;
-      ctx.globalAlpha = isActive ? 0.9 : 0.5;
-      offsets.forEach((point) => {
-        const { x, y } = toCanvas(point);
-        ctx.beginPath();
-        ctx.arc(x, y, isActive ? 4 : 3, 0, Math.PI * 2);
-        ctx.fill();
-      });
-
-      const safeIndex = Math.min(Math.max(highlightIndex, 0), offsets.length - 1);
-      const highlightPoint = offsets[safeIndex];
-      if (highlightPoint) {
-        const { x, y } = toCanvas(highlightPoint);
-        ctx.fillStyle = isActive ? '#e74c3c' : '#2c3e50';
-        ctx.globalAlpha = 1;
-        ctx.beginPath();
-        ctx.arc(x, y, isActive ? 7 : 5, 0, Math.PI * 2);
-        ctx.fill();
+      const safeIndex = Math.min(Math.max(highlightIndex, 0), projection.points.length - 1);
+      const highlightPoint = projection.points[safeIndex];
+      if (!highlightPoint) {
+        return;
       }
+      const { x, y } = projectedToCanvas(highlightPoint.primary, highlightPoint.secondary, context);
+      ctx.save();
+      ctx.fillStyle = isActive ? '#e74c3c' : '#2c3e50';
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, isActive ? 7 : 5, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     }
 
@@ -709,13 +704,15 @@
       let maxSecondary = -Infinity;
 
       visibleTracks.forEach((track) => {
-        track.offsets.forEach((offset) => {
-          const projected = projectOffset(offset);
-          minPrimary = Math.min(minPrimary, projected.primary);
-          maxPrimary = Math.max(maxPrimary, projected.primary);
-          minSecondary = Math.min(minSecondary, projected.secondary);
-          maxSecondary = Math.max(maxSecondary, projected.secondary);
-        });
+        const projection = track.projections?.[axisMode];
+        if (!projection || !projection.points.length) {
+          return;
+        }
+        const bounds = projection.bounds;
+        minPrimary = Math.min(minPrimary, bounds.minPrimary);
+        maxPrimary = Math.max(maxPrimary, bounds.maxPrimary);
+        minSecondary = Math.min(minSecondary, bounds.minSecondary);
+        maxSecondary = Math.max(maxSecondary, bounds.maxSecondary);
       });
 
       if (!visibleTracks.length || !Number.isFinite(minPrimary) || !Number.isFinite(minSecondary)) {
@@ -901,6 +898,48 @@
         dz: row.z - first.z
       }));
     }
+
+    function buildProjections(offsets) {
+      const createProjection = (secondaryKey) => {
+        if (!offsets.length) {
+          return {
+            points: [],
+            path: new Path2D(),
+            bounds: { minPrimary: 0, maxPrimary: 0, minSecondary: 0, maxSecondary: 0 }
+          };
+        }
+        const points = offsets.map((offset) => ({
+          primary: offset.dx,
+          secondary: offset[secondaryKey]
+        }));
+        const path = new Path2D();
+        points.forEach((point, index) => {
+          if (index === 0) {
+            path.moveTo(point.primary, point.secondary);
+          } else {
+            path.lineTo(point.primary, point.secondary);
+          }
+        });
+        const bounds = points.reduce((acc, point) => ({
+          minPrimary: Math.min(acc.minPrimary, point.primary),
+          maxPrimary: Math.max(acc.maxPrimary, point.primary),
+          minSecondary: Math.min(acc.minSecondary, point.secondary),
+          maxSecondary: Math.max(acc.maxSecondary, point.secondary)
+        }), {
+          minPrimary: Infinity,
+          maxPrimary: -Infinity,
+          minSecondary: Infinity,
+          maxSecondary: -Infinity
+        });
+        return { points, path, bounds };
+      };
+
+      return {
+        xy: createProjection('dy'),
+        xz: createProjection('dz')
+      };
+    }
+
   </script>
 </body>
 </html>
