@@ -135,6 +135,7 @@
     let tracks = [];
     let selectedTrackIds = new Set();
     let activeTrackId = null;
+    let hoveredTrackId = null;
     let globalTimeline = [];
     let animationId = null;
     let isPlaying = false;
@@ -375,6 +376,8 @@
       tracks.forEach((track) => {
         const row = document.createElement('div');
         row.className = 'track-row';
+        row.addEventListener('mouseenter', () => setHoveredTrack(track.id));
+        row.addEventListener('mouseleave', () => clearHoveredTrack(track.id));
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
@@ -413,6 +416,22 @@
         row.appendChild(meta);
         trackList.appendChild(row);
       });
+    }
+
+    function setHoveredTrack(trackId) {
+      if (hoveredTrackId === trackId) {
+        return;
+      }
+      hoveredTrackId = trackId;
+      drawFrame(Number(slider.value));
+    }
+
+    function clearHoveredTrack(trackId) {
+      if (hoveredTrackId !== trackId) {
+        return;
+      }
+      hoveredTrackId = null;
+      drawFrame(Number(slider.value));
     }
 
     function handleTrackToggle(trackId, isChecked) {
@@ -672,15 +691,22 @@
         return;
       }
 
+      const isHovered = hoveredTrackId === track.id;
+
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       applyPathTransform(context);
       ctx.strokeStyle = track.color;
-      ctx.globalAlpha = isActive ? 1 : 0.6;
+      ctx.globalAlpha = isActive || isHovered ? 1 : 0.55;
       ctx.lineJoin = 'round';
-      const lineWidthBase = isActive ? 2.5 : 1.8;
+      const baseWidth = isActive ? 2.5 : 1.8;
+      const widthBoost = isHovered && !isActive ? 1.45 : isHovered ? 1.2 : 1;
       const scaleFactor = context.scale * viewState.zoom || 1;
-      ctx.lineWidth = lineWidthBase / scaleFactor;
+      ctx.lineWidth = (baseWidth * widthBoost) / scaleFactor;
+      if (isHovered) {
+        ctx.shadowColor = track.color;
+        ctx.shadowBlur = 6 / Math.max(viewState.zoom, 0.5);
+      }
       ctx.stroke(projection.path);
       ctx.restore();
 
@@ -693,10 +719,16 @@
       ctx.save();
       const ended = hasTrackEndedAt(track, targetTimestamp, globalIndex);
       ctx.fillStyle = ended ? '#f1c40f' : (isActive ? '#e74c3c' : '#2c3e50');
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = isHovered || isActive ? 1 : 0.9;
       ctx.beginPath();
-      ctx.arc(x, y, isActive ? 7 : 5, 0, Math.PI * 2);
+      const radius = isActive ? 7 : (isHovered ? 6 : 5);
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.fill();
+      if (isHovered && !ended) {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+      }
       ctx.restore();
     }
 
