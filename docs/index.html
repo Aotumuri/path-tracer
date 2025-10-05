@@ -24,7 +24,8 @@
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     #details { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
     .detail-box { background: #f1f1f1; border-radius: 6px; padding: 10px; font-size: 0.92rem; line-height: 1.4; }
-    .track-row { display: grid; grid-template-columns: auto auto 16px 1fr; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e5e5e5; }
+    .track-row { display: grid; grid-template-columns: auto auto auto 16px 1fr; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e5e5e5; }
+    .track-row button { padding: 4px 8px; font-size: 0.85rem; }
     .track-row:last-child { border-bottom: none; }
     .track-row input[type="checkbox"],
     .track-row input[type="radio"] { width: 16px; height: 16px; }
@@ -136,6 +137,7 @@
     let selectedTrackIds = new Set();
     let activeTrackId = null;
     let hoveredTrackId = null;
+    let soloMode = { enabled: false, trackId: null, prevSelection: null };
     let globalTimeline = [];
     let animationId = null;
     let isPlaying = false;
@@ -396,6 +398,19 @@
           }
         });
 
+        const soloBtn = document.createElement('button');
+        soloBtn.type = 'button';
+        const isSoloed = soloMode.enabled && soloMode.trackId === track.id;
+        soloBtn.textContent = isSoloed ? 'Unfocus' : 'Focus';
+        soloBtn.title = isSoloed ? 'Show previously selected tracks' : 'Show only this track';
+        soloBtn.addEventListener('click', () => {
+          if (isSoloed) {
+            exitSoloMode();
+          } else {
+            enterSoloMode(track.id);
+          }
+        });
+
         const swatch = document.createElement('span');
         swatch.className = 'track-swatch';
         swatch.style.backgroundColor = track.color;
@@ -411,6 +426,7 @@
 
         row.appendChild(checkbox);
         row.appendChild(radio);
+        row.appendChild(soloBtn);
         row.appendChild(swatch);
         row.appendChild(title);
         row.appendChild(meta);
@@ -435,6 +451,9 @@
     }
 
     function handleTrackToggle(trackId, isChecked) {
+      if (soloMode.enabled) {
+        exitSoloMode();
+      }
       if (isChecked) {
         selectedTrackIds.add(trackId);
       } else {
@@ -466,6 +485,34 @@
       stopPlayback(false);
       refreshTrackList();
       updateControls();
+      drawFrame(Number(slider.value));
+    }
+
+    function enterSoloMode(trackId) {
+      if (soloMode.enabled && soloMode.trackId === trackId) {
+        exitSoloMode();
+        return;
+      }
+      soloMode.enabled = true;
+      soloMode.trackId = trackId;
+      soloMode.prevSelection = new Set(selectedTrackIds);
+      selectedTrackIds = new Set([trackId]);
+      setActiveTrack(trackId);
+      refreshTrackList();
+      drawFrame(Number(slider.value));
+    }
+
+    function exitSoloMode() {
+      if (!soloMode.enabled) return;
+      if (soloMode.prevSelection && soloMode.prevSelection.size) {
+        selectedTrackIds = new Set(soloMode.prevSelection);
+      } else if (soloMode.trackId) {
+        selectedTrackIds = new Set([soloMode.trackId]);
+      }
+      soloMode.enabled = false;
+      soloMode.trackId = null;
+      soloMode.prevSelection = null;
+      refreshTrackList();
       drawFrame(Number(slider.value));
     }
 
