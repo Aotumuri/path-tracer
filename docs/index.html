@@ -191,6 +191,43 @@
         border: 1px solid #bbb;
         background: #fff;
       }
+      .reach-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+        font-size: 0.9rem;
+        color: #333;
+      }
+      .reach-toolbar label {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .reach-toolbar label.reach-toggle {
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+      }
+      .reach-toolbar input[type="number"] {
+        width: 90px;
+        padding: 4px 6px;
+        border-radius: 4px;
+        border: 1px solid #bbb;
+        background: #fff;
+        font-size: 0.9rem;
+      }
+      .reach-toolbar input[type="number"]:disabled {
+        background: #f3f3f3;
+        color: #888;
+      }
+      .reach-count {
+        font-weight: 600;
+        color: #2980b9;
+        margin-left: auto;
+      }
       canvas.dragging {
         cursor: grabbing;
       }
@@ -263,6 +300,35 @@
               <option value="xz">X vs Z</option>
             </select>
           </div>
+          <div class="reach-toolbar">
+            <label class="reach-toggle">
+              <input type="checkbox" id="reachToggle" />
+              Escape distance counter
+            </label>
+            <label>
+              Center X (dx)
+              <input type="number" id="reachTargetX" step="0.5" value="0" />
+            </label>
+            <label>
+              Center Y (dy)
+              <input type="number" id="reachTargetY" step="0.5" value="0" />
+            </label>
+            <label>
+              Center Z (dz)
+              <input type="number" id="reachTargetZ" step="0.5" value="0" />
+            </label>
+            <label>
+              Escape radius (blocks)
+              <input
+                type="number"
+                id="reachRadius"
+                step="0.5"
+                min="0"
+                value="5"
+              />
+            </label>
+            <span id="reachSummary" class="reach-count"></span>
+          </div>
           <div id="details">
             <div class="detail-box" id="trackBox"></div>
             <div class="detail-box" id="timestampBox"></div>
@@ -295,6 +361,12 @@
       const zoomResetButton = document.getElementById("zoomReset");
       const zoomDisplay = document.getElementById("zoomDisplay");
       const axisModeSelect = document.getElementById("axisMode");
+      const reachToggle = document.getElementById("reachToggle");
+      const reachTargetXInput = document.getElementById("reachTargetX");
+      const reachTargetYInput = document.getElementById("reachTargetY");
+      const reachTargetZInput = document.getElementById("reachTargetZ");
+      const reachRadiusInput = document.getElementById("reachRadius");
+      const reachSummary = document.getElementById("reachSummary");
 
       const colorCache = new Map();
       const goldenAngle = 137.508;
@@ -335,6 +407,11 @@
       let isPanning = false;
       let panPointerId = null;
       let panStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
+      const reachOptions = {
+        enabled: false,
+        target: { x: 0, y: 0, z: 0 },
+        radius: 5,
+      };
 
       fileInput.addEventListener("change", (event) => {
         handleFileSelection(event.target.files);
@@ -376,12 +453,131 @@
         drawFrame(Number(slider.value));
       });
 
+      reachToggle.addEventListener("change", () => {
+        reachOptions.enabled = reachToggle.checked;
+        syncReachInputState();
+        evaluateReach();
+        refreshTrackList();
+        updateReachSummary();
+        drawFrame(Number(slider.value));
+      });
+
+      const reachInputElements = [
+        reachTargetXInput,
+        reachTargetYInput,
+        reachTargetZInput,
+        reachRadiusInput,
+      ];
+
+      reachInputElements.forEach((input) => {
+        input.addEventListener("input", () => {
+          handleReachInputChange();
+        });
+      });
+
+      syncReachInputState();
+      updateReachSummary();
+      handleReachInputChange();
+
       canvas.addEventListener("wheel", handleWheel, { passive: false });
       canvas.addEventListener("pointerdown", handlePointerDown);
       canvas.addEventListener("pointermove", handlePointerMove);
       canvas.addEventListener("pointerup", handlePointerUp);
       canvas.addEventListener("pointerleave", handlePointerUp);
       canvas.addEventListener("pointercancel", handlePointerUp);
+
+      function parseReachNumber(value) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : 0;
+      }
+
+      function syncReachInputState() {
+        const disabled = !reachOptions.enabled;
+        reachInputElements.forEach((input) => {
+          input.disabled = disabled;
+        });
+        if (!reachOptions.enabled) {
+          reachSummary.textContent = "";
+        }
+      }
+
+      function handleReachInputChange() {
+        reachOptions.target.x = parseReachNumber(reachTargetXInput.value);
+        reachOptions.target.y = parseReachNumber(reachTargetYInput.value);
+        reachOptions.target.z = parseReachNumber(reachTargetZInput.value);
+        const radius = parseReachNumber(reachRadiusInput.value);
+        const clampedRadius = Math.max(0, radius);
+        if (clampedRadius !== radius) {
+          reachRadiusInput.value = clampedRadius;
+        }
+        reachOptions.radius = clampedRadius;
+        if (reachOptions.enabled) {
+          evaluateReach();
+          refreshTrackList();
+          updateReachSummary();
+          drawFrame(Number(slider.value));
+        }
+      }
+
+      function evaluateReach() {
+        if (!reachOptions.enabled) {
+          tracks.forEach((track) => {
+            track.escapedRadius = false;
+          });
+          return;
+        }
+        const radiusSq = reachOptions.radius * reachOptions.radius;
+        const EPS = Math.max(1e-6, radiusSq * 1e-4); // slight buffer so small jitters don't count as escape
+        tracks.forEach((track) => {
+          let escaped = false;
+          let sawInside = false;
+          const offsets = track.offsets || [];
+          for (let i = 0; i < offsets.length; i++) {
+            const offset = offsets[i];
+            const dx = offset.dx - reachOptions.target.x;
+            const dy = offset.dy - reachOptions.target.y;
+            const dz = offset.dz - reachOptions.target.z;
+            const distSq = dx * dx + dy * dy + dz * dz;
+            if (!sawInside && distSq <= radiusSq + EPS) {
+              sawInside = true;
+              continue;
+            }
+            if (sawInside && distSq >= radiusSq + EPS) {
+              escaped = true;
+              break;
+            }
+          }
+          track.escapedRadius = escaped;
+        });
+      }
+
+      function updateReachSummary() {
+        if (!reachOptions.enabled) {
+          reachSummary.textContent = "";
+          return;
+        }
+        if (!tracks.length) {
+          reachSummary.textContent = "Escaped: 0/0";
+          return;
+        }
+        let visibleReached = 0;
+        let visibleTotal = 0;
+        let totalReached = 0;
+        tracks.forEach((track) => {
+          if (track.escapedRadius) {
+            totalReached += 1;
+          }
+          if (selectedTrackIds.has(track.id)) {
+            visibleTotal += 1;
+            if (track.escapedRadius) {
+              visibleReached += 1;
+            }
+          }
+        });
+        const totalLabel = `${visibleReached}/${visibleTotal || 0} visible`;
+        const allLabel = `${totalReached}/${tracks.length} total`;
+        reachSummary.textContent = `Escaped: ${totalLabel} • ${allLabel}`;
+      }
 
       function handleWheel(event) {
         if (!globalTimeline.length) {
@@ -555,9 +751,11 @@
         markTimelineCoverage();
         resetView(true);
         slider.value = 0;
+        evaluateReach();
 
         refreshTrackList();
         updateControls();
+        updateReachSummary();
         drawFrame(0);
         viewer.style.display = "block";
 
@@ -624,7 +822,17 @@
           const covers = track.endsEarly
             ? "full timeline: false"
             : "full timeline: true";
-          meta.textContent = `${track.timeline.length} points • ${covers}`;
+          const reachLabel = reachOptions.enabled
+            ? ` • escaped radius: ${track.escapedRadius ? "yes" : "no"}`
+            : "";
+          meta.textContent = `${track.timeline.length} points • ${covers}${reachLabel}`;
+          if (reachOptions.enabled) {
+            row.style.backgroundColor = track.escapedRadius
+              ? "rgba(41, 128, 185, 0.14)"
+              : "";
+          } else {
+            row.style.backgroundColor = "";
+          }
 
           row.appendChild(checkbox);
           row.appendChild(radio);
@@ -663,6 +871,7 @@
           if (!selectedTrackIds.size) {
             selectedTrackIds.add(trackId);
             refreshTrackList();
+            updateReachSummary();
             return;
           }
           if (trackId === activeTrackId) {
@@ -675,6 +884,7 @@
             }
           }
         }
+        updateReachSummary();
         drawFrame(Number(slider.value));
       }
 
@@ -689,6 +899,7 @@
         stopPlayback(false);
         refreshTrackList();
         updateControls();
+        updateReachSummary();
         drawFrame(Number(slider.value));
       }
 
@@ -703,6 +914,7 @@
         selectedTrackIds = new Set([trackId]);
         setActiveTrack(trackId);
         refreshTrackList();
+        updateReachSummary();
         drawFrame(Number(slider.value));
       }
 
@@ -717,6 +929,7 @@
         soloMode.trackId = null;
         soloMode.prevSelection = null;
         refreshTrackList();
+        updateReachSummary();
         drawFrame(Number(slider.value));
       }
 
@@ -935,6 +1148,10 @@
           );
         });
 
+        if (reachOptions.enabled && reachOptions.radius > 0) {
+          drawReachCircle(context);
+        }
+
         const origin = projectedToCanvas(0, 0, context);
         ctx.strokeStyle = "#2c3e50";
         ctx.lineWidth = 2;
@@ -1057,6 +1274,38 @@
           ctx.strokeStyle = "#ffffff";
           ctx.stroke();
         }
+        ctx.restore();
+      }
+
+      function drawReachCircle(context) {
+        const centerPrimary = reachOptions.target.x;
+        const centerSecondary =
+          axisMode === "xz" ? reachOptions.target.z : reachOptions.target.y;
+        const center = projectedToCanvas(
+          centerPrimary,
+          centerSecondary,
+          context
+        );
+        const pixelRadius =
+          reachOptions.radius * context.scale * Math.max(viewState.zoom, 0);
+        if (!Number.isFinite(pixelRadius) || pixelRadius <= 0) {
+          return;
+        }
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(52, 152, 219, 0.08)";
+        ctx.strokeStyle = "rgba(41, 128, 185, 0.9)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
+        ctx.arc(center.x, center.y, pixelRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(41, 128, 185, 0.9)";
+        ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
+        ctx.fill();
         ctx.restore();
       }
 
