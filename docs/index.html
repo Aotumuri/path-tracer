@@ -228,6 +228,53 @@
         color: #2980b9;
         margin-left: auto;
       }
+      .export-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+        font-size: 0.9rem;
+        color: #333;
+      }
+      .export-toolbar .export-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .export-toolbar label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+      }
+      .export-toolbar .export-group button {
+        padding: 6px 10px;
+        border-radius: 4px;
+        border: 1px solid #bbb;
+        background: #fff;
+        cursor: pointer;
+      }
+      .export-toolbar .export-group button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .export-toolbar .export-group input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+      }
+      .export-toolbar .export-group input[type="number"] {
+        width: 72px;
+        padding: 4px 6px;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        font-size: 0.9rem;
+        background: #fff;
+      }
+      .export-toolbar .export-group input[type="number"]:disabled {
+        background: #f3f3f3;
+        color: #888;
+      }
       canvas.dragging {
         cursor: grabbing;
       }
@@ -329,6 +376,40 @@
             </label>
             <span id="reachSummary" class="reach-count"></span>
           </div>
+          <div class="export-toolbar">
+            <div class="export-group">
+              <label>
+                <input type="checkbox" id="showPathsToggle" checked />
+                Path
+              </label>
+              <label>
+                <input type="checkbox" id="showCircleToggle" checked />
+                Escape circle
+              </label>
+            </div>
+            <div class="export-group">
+              <label>
+                <input type="checkbox" id="cropToggle" />
+                Crop square
+              </label>
+              <label>
+                Size (blocks)
+                <input type="number" id="cropSize" value="50" min="1" step="1" />
+              </label>
+              <label>
+                Center
+                <select id="cropCenterMode">
+                  <option value="origin">Track origin</option>
+                  <option value="escape">Escape target</option>
+                </select>
+              </label>
+            </div>
+            <div class="export-group">
+              <button type="button" id="centerView">Center view</button>
+              <button type="button" id="exportPng">Export PNG</button>
+              <button type="button" id="exportSvg">Export SVG</button>
+            </div>
+          </div>
           <div id="details">
             <div class="detail-box" id="trackBox"></div>
             <div class="detail-box" id="timestampBox"></div>
@@ -367,6 +448,14 @@
       const reachTargetZInput = document.getElementById("reachTargetZ");
       const reachRadiusInput = document.getElementById("reachRadius");
       const reachSummary = document.getElementById("reachSummary");
+      const showPathsToggle = document.getElementById("showPathsToggle");
+      const showCircleToggle = document.getElementById("showCircleToggle");
+      const cropToggle = document.getElementById("cropToggle");
+      const cropSizeInput = document.getElementById("cropSize");
+      const cropCenterModeSelect = document.getElementById("cropCenterMode");
+      const centerViewButton = document.getElementById("centerView");
+      const exportPngButton = document.getElementById("exportPng");
+      const exportSvgButton = document.getElementById("exportSvg");
 
       const colorCache = new Map();
       const goldenAngle = 137.508;
@@ -411,6 +500,11 @@
         enabled: false,
         target: { x: 0, y: 0, z: 0 },
         radius: 5,
+      };
+      const displayOptions = {
+        showPaths: true,
+        showEscapeCircle: true,
+        crop: { enabled: false, size: 50, centerMode: "origin" },
       };
 
       fileInput.addEventListener("change", (event) => {
@@ -475,8 +569,58 @@
         });
       });
 
+      showPathsToggle.addEventListener("change", () => {
+        displayOptions.showPaths = showPathsToggle.checked;
+        drawFrame(Number(slider.value));
+      });
+
+      showCircleToggle.addEventListener("change", () => {
+        displayOptions.showEscapeCircle = showCircleToggle.checked;
+        drawFrame(Number(slider.value));
+      });
+
+      cropToggle.addEventListener("change", () => {
+        displayOptions.crop.enabled = cropToggle.checked;
+        syncCropInputs();
+        drawFrame(Number(slider.value));
+      });
+
+      cropSizeInput.addEventListener("input", () => {
+        const nextSize = parseCropSize(cropSizeInput.value);
+        displayOptions.crop.size = nextSize;
+        if (displayOptions.crop.enabled) {
+          drawFrame(Number(slider.value));
+        }
+      });
+
+      cropCenterModeSelect.addEventListener("change", () => {
+        displayOptions.crop.centerMode = cropCenterModeSelect.value;
+        if (displayOptions.crop.enabled) {
+          drawFrame(Number(slider.value));
+        }
+      });
+
+      exportPngButton.addEventListener("click", () => {
+        exportPNG();
+      });
+
+      exportSvgButton.addEventListener("click", () => {
+        exportSVG();
+      });
+
+      centerViewButton.addEventListener("click", () => {
+        centerView();
+      });
+
       syncReachInputState();
+      displayOptions.showPaths = showPathsToggle.checked;
+      displayOptions.showEscapeCircle = showCircleToggle.checked;
+      displayOptions.crop.enabled = cropToggle.checked;
+      displayOptions.crop.size = parseCropSize(cropSizeInput.value);
+      displayOptions.crop.centerMode = cropCenterModeSelect.value;
       updateReachSummary();
+      syncExportControls(false);
+      syncCropInputs();
       handleReachInputChange();
 
       canvas.addEventListener("wheel", handleWheel, { passive: false });
@@ -491,14 +635,27 @@
         return Number.isFinite(numeric) ? numeric : 0;
       }
 
+      function parseCropSize(value) {
+        const numeric = Math.max(1, Math.round(Number(value)) || 1);
+        cropSizeInput.value = numeric;
+        return numeric;
+      }
+
       function syncReachInputState() {
         const disabled = !reachOptions.enabled;
         reachInputElements.forEach((input) => {
           input.disabled = disabled;
         });
+        showCircleToggle.disabled = disabled;
         if (!reachOptions.enabled) {
           reachSummary.textContent = "";
         }
+      }
+
+      function syncCropInputs() {
+        const disabled = !displayOptions.crop.enabled;
+        cropSizeInput.disabled = disabled;
+        cropCenterModeSelect.disabled = disabled;
       }
 
       function handleReachInputChange() {
@@ -577,6 +734,315 @@
         const totalLabel = `${visibleReached}/${visibleTotal || 0} visible`;
         const allLabel = `${totalReached}/${tracks.length} total`;
         reachSummary.textContent = `Escaped: ${totalLabel} • ${allLabel}`;
+      }
+
+      function prepareExportSnapshot() {
+        const totalFrames = globalTimeline.length;
+        if (!totalFrames) {
+          return null;
+        }
+        const rawIndex = Number(slider.value);
+        const clampedIndex = Math.min(
+          Math.max(Number.isFinite(rawIndex) ? rawIndex : 0, 0),
+          totalFrames - 1
+        );
+        const targetTimestamp = globalTimeline[clampedIndex];
+        const visibleTracks = tracks.filter((track) =>
+          selectedTrackIds.has(track.id)
+        );
+        const active = getActiveTrack();
+        if (!visibleTracks.length || !active) {
+          return null;
+        }
+        const trackHighlights = visibleTracks.map((track) => ({
+          track,
+          highlightIndex: findNearestIndex(track, targetTimestamp, clampedIndex),
+        }));
+        const margin = 40;
+        const width = canvas.width - margin * 2;
+        const height = canvas.height - margin * 2;
+        let context = null;
+        if (
+          lastRenderContext &&
+          lastRenderContext.axisMode === axisMode &&
+          lastRenderContext.bounds
+        ) {
+          context = {
+            bounds: { ...lastRenderContext.bounds },
+            margin: lastRenderContext.margin,
+            scale: lastRenderContext.scale,
+          };
+        } else {
+          const bounds = computeBounds(visibleTracks);
+          let finalBounds = { ...bounds };
+          if (displayOptions.crop.enabled) {
+            const center = computeCropCenter();
+            const halfSize = (displayOptions.crop.size || 1) / 2;
+            finalBounds = {
+              minPrimary: center.primary - halfSize,
+              maxPrimary: center.primary + halfSize,
+              minSecondary: center.secondary - halfSize,
+              maxSecondary: center.secondary + halfSize,
+            };
+          }
+          const spanPrimary = finalBounds.maxPrimary - finalBounds.minPrimary || 1;
+          const spanSecondary =
+            finalBounds.maxSecondary - finalBounds.minSecondary || 1;
+          const scale = Math.min(width / spanPrimary, height / spanSecondary);
+          context = { bounds: finalBounds, margin, scale };
+        }
+        return {
+          clampedIndex,
+          targetTimestamp,
+          visibleTracks,
+          trackHighlights,
+          context,
+        };
+      }
+
+      function exportPNG() {
+        if (!tracks.length) {
+          errorBox.textContent = "No data loaded to export.";
+          return;
+        }
+        const snapshot = prepareExportSnapshot();
+        if (!snapshot) {
+          errorBox.textContent = "Nothing visible to export.";
+          return;
+        }
+        drawFrame(snapshot.clampedIndex);
+        const filename = createExportFilename("png");
+        if (canvas.toBlob) {
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              errorBox.textContent = "Failed to create PNG blob.";
+              return;
+            }
+            downloadBlob(blob, filename);
+          });
+          return;
+        }
+        const dataUrl = canvas.toDataURL("image/png");
+        downloadDataUrl(dataUrl, filename);
+      }
+
+      function exportSVG() {
+        if (!tracks.length) {
+          errorBox.textContent = "No data loaded to export.";
+          return;
+        }
+        const snapshot = prepareExportSnapshot();
+        if (!snapshot) {
+          errorBox.textContent = "Nothing visible to export.";
+          return;
+        }
+        const svgString = buildSVGString(snapshot);
+        const blob = new Blob([svgString], { type: "image/svg+xml" });
+        downloadBlob(blob, createExportFilename("svg"));
+      }
+
+      function buildSVGString(snapshot) {
+        const { context, trackHighlights, visibleTracks, targetTimestamp, clampedIndex } =
+          snapshot;
+        const width = canvas.width;
+        const height = canvas.height;
+        const pieces = [];
+        pieces.push('<?xml version="1.0" encoding="UTF-8"?>');
+        pieces.push(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+        );
+        pieces.push('<rect width="100%" height="100%" fill="#ffffff"/>');
+
+        const zoomLevel = viewState.zoom || 1;
+        const scaleFactor = context.scale * zoomLevel || 1;
+
+      const cropRect =
+        displayOptions.crop.enabled && displayOptions.crop.size > 0
+          ? computeCropRect(context)
+          : null;
+        let clipId = null;
+        if (
+          cropRect &&
+          Number.isFinite(cropRect.width) &&
+          Number.isFinite(cropRect.height) &&
+          cropRect.width > 0 &&
+          cropRect.height > 0
+        ) {
+          clipId = `clip-${Math.random().toString(36).slice(2, 10)}`;
+          pieces.push(
+            `<defs><clipPath id="${clipId}"><rect x="${cropRect.x.toFixed(
+              2
+            )}" y="${cropRect.y.toFixed(2)}" width="${cropRect.width.toFixed(
+              2
+            )}" height="${cropRect.height.toFixed(2)}"/></clipPath></defs>`
+          );
+          pieces.push(`<g clip-path="url(#${clipId})">`);
+        }
+
+        // Axes (if crossing zero)
+        if (context.bounds.minSecondary <= 0 && context.bounds.maxSecondary >= 0) {
+          const start = projectedToCanvas(context.bounds.minPrimary, 0, context);
+          const end = projectedToCanvas(context.bounds.maxPrimary, 0, context);
+          pieces.push(
+            `<line x1="${start.x.toFixed(2)}" y1="${start.y.toFixed(2)}" x2="${end.x.toFixed(2)}" y2="${end.y.toFixed(2)}" stroke="#e0e0e0" stroke-width="1" stroke-dasharray="4 4"/>`
+          );
+        }
+        if (context.bounds.minPrimary <= 0 && context.bounds.maxPrimary >= 0) {
+          const start = projectedToCanvas(0, context.bounds.minSecondary, context);
+          const end = projectedToCanvas(0, context.bounds.maxSecondary, context);
+          pieces.push(
+            `<line x1="${start.x.toFixed(2)}" y1="${start.y.toFixed(2)}" x2="${end.x.toFixed(2)}" y2="${end.y.toFixed(2)}" stroke="#e0e0e0" stroke-width="1" stroke-dasharray="4 4"/>`
+          );
+        }
+
+        if (displayOptions.showPaths) {
+          visibleTracks.forEach((track) => {
+            const projection = track.projections?.[axisMode];
+            if (!projection || !projection.points.length) {
+              return;
+            }
+            const pathD = buildSVGPath(projection.points, context);
+            if (!pathD) {
+              return;
+            }
+            const isActive = track.id === activeTrackId;
+            const opacity = isActive ? 1 : 0.55;
+            const strokeWidth = ((isActive ? 2.5 : 1.8) / scaleFactor).toFixed(2);
+            pieces.push(
+              `<path d="${pathD}" fill="none" stroke="${track.color}" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round" opacity="${opacity}"/>`
+            );
+          });
+        }
+
+        // Highlight markers
+        trackHighlights.forEach(({ track, highlightIndex }) => {
+          const projection = track.projections?.[axisMode];
+          if (!projection || !projection.points.length) {
+            return;
+          }
+          const safeIndex = Math.min(
+            Math.max(highlightIndex, 0),
+            projection.points.length - 1
+          );
+          const highlightPoint = projection.points[safeIndex];
+          if (!highlightPoint) {
+            return;
+          }
+          const { x, y } = projectedToCanvas(
+            highlightPoint.primary,
+            highlightPoint.secondary,
+            context
+          );
+          const ended = hasTrackEndedAt(track, targetTimestamp, clampedIndex);
+          const stuckNow = !ended && isStuckAt(track, safeIndex);
+          const isActive = track.id === activeTrackId;
+          const fillColor = ended
+            ? "#f1c40f"
+            : stuckNow
+            ? "#8e44ad"
+            : isActive
+            ? "#e74c3c"
+            : "#2c3e50";
+          const fillOpacity = isActive ? 1 : 0.9;
+          const radius = (isActive ? 7 : 5).toFixed(2);
+          const circleParts = [
+            `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${radius}" fill="${fillColor}" fill-opacity="${fillOpacity}"`
+          ];
+          if (stuckNow) {
+            circleParts.push(' stroke="#ffffff" stroke-width="2"');
+          }
+          circleParts.push("/>");
+          pieces.push(circleParts.join(""));
+        });
+
+        if (
+          reachOptions.enabled &&
+          reachOptions.radius > 0 &&
+          displayOptions.showEscapeCircle
+        ) {
+          const centerPrimary = reachOptions.target.x;
+          const centerSecondary =
+            axisMode === "xz" ? reachOptions.target.z : reachOptions.target.y;
+          const center = projectedToCanvas(centerPrimary, centerSecondary, context);
+          const pixelRadius =
+            reachOptions.radius * context.scale * Math.max(viewState.zoom, 0);
+          if (Number.isFinite(pixelRadius) && pixelRadius > 0) {
+            pieces.push(
+              `<circle cx="${center.x.toFixed(2)}" cy="${center.y.toFixed(2)}" r="${pixelRadius.toFixed(2)}" fill="#3498db" fill-opacity="0.08" stroke="#2980b9" stroke-width="2" stroke-dasharray="8 6"/>`
+            );
+            pieces.push(
+              `<circle cx="${center.x.toFixed(2)}" cy="${center.y.toFixed(2)}" r="4" fill="#2980b9"/>`
+            );
+          }
+        }
+
+        const origin = projectedToCanvas(0, 0, context);
+        pieces.push(
+          `<circle cx="${origin.x.toFixed(2)}" cy="${origin.y.toFixed(2)}" r="8" fill="none" stroke="#2c3e50" stroke-width="2"/>`
+        );
+        pieces.push(
+          `<text x="${(origin.x + 10).toFixed(2)}" y="${(origin.y - 8).toFixed(2)}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#2c3e50">origin</text>`
+        );
+
+        if (clipId) {
+          pieces.push("</g>");
+          pieces.push(
+            `<rect x="${cropRect.x.toFixed(2)}" y="${cropRect.y.toFixed(
+              2
+            )}" width="${cropRect.width.toFixed(2)}" height="${cropRect.height.toFixed(
+              2
+            )}" fill="none" stroke="rgba(52, 152, 219, 0.6)" stroke-width="1.5" stroke-dasharray="6 4"/>`
+          );
+        }
+
+        pieces.push("</svg>");
+        return pieces.join("\n");
+      }
+
+      function buildSVGPath(points, context) {
+        if (!points.length) {
+          return "";
+        }
+        const first = projectedToCanvas(points[0].primary, points[0].secondary, context);
+        let d = `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`;
+        for (let i = 1; i < points.length; i++) {
+          const projected = projectedToCanvas(
+            points[i].primary,
+            points[i].secondary,
+            context
+          );
+          d += ` L ${projected.x.toFixed(2)} ${projected.y.toFixed(2)}`;
+        }
+        return d;
+      }
+
+      function downloadBlob(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 500);
+      }
+
+      function downloadDataUrl(dataUrl, filename) {
+        const link = document.createElement("a");
+        link.href = dataUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      function createExportFilename(extension) {
+        const timestamp = new Date()
+          .toISOString()
+          .replace(/[:.]/g, "")
+          .slice(0, 15);
+        const projection = axisMode.toUpperCase();
+        return `timeline_${projection}_${timestamp}.${extension}`;
       }
 
       function handleWheel(event) {
@@ -692,6 +1158,35 @@
         }
         const percent = Math.round(viewState.zoom * 100);
         zoomDisplay.textContent = `Zoom: ${percent}%`;
+      }
+
+      function centerView() {
+        if (!tracks.length) {
+          return;
+        }
+        if (
+          !lastRenderContext ||
+          lastRenderContext.axisMode !== axisMode
+        ) {
+          drawFrame(Number(slider.value));
+          if (
+            !lastRenderContext ||
+            lastRenderContext.axisMode !== axisMode
+          ) {
+            return;
+          }
+        }
+
+        const { bounds, margin, scale } = lastRenderContext;
+        const baseX = margin + (0 - bounds.minPrimary) * scale;
+        const baseY = margin + (bounds.maxSecondary - 0) * scale;
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const zoom = viewState.zoom || 1;
+
+        viewState.offsetX = -(baseX - centerX) * zoom;
+        viewState.offsetY = -(baseY - centerY) * zoom;
+        drawFrame(Number(slider.value));
       }
 
       async function handleFileSelection(fileList) {
@@ -945,6 +1440,7 @@
           slider.max = 0;
           slider.value = 0;
           playPause.disabled = true;
+          syncExportControls(false);
           return;
         }
         slider.disabled = false;
@@ -955,6 +1451,13 @@
           ? Math.min(Math.max(currentValue, 0), slider.max)
           : 0;
         playPause.disabled = totalFrames < 2;
+        syncExportControls(true);
+      }
+
+      function syncExportControls(enabled) {
+        exportPngButton.disabled = !enabled;
+        exportSvgButton.disabled = !enabled;
+        centerViewButton.disabled = !enabled;
       }
 
       function startPlayback() {
@@ -1022,6 +1525,7 @@
           updateDetails(null, null, null, null);
           playPause.textContent = "Play";
           updateZoomDisplay();
+          lastRenderContext = null;
           return;
         }
 
@@ -1039,6 +1543,7 @@
           updateDetails(null, null, null, null);
           playPause.textContent = isPlaying ? "Pause" : "Play";
           updateZoomDisplay();
+          lastRenderContext = null;
           return;
         }
 
@@ -1087,10 +1592,25 @@
         const width = canvas.width - margin * 2;
         const height = canvas.height - margin * 2;
 
-        const bounds = computeBounds(trackHighlights.map((item) => item.track));
+        const tracksForBounds = trackHighlights.map((item) => item.track);
+        const naturalBounds = computeBounds(tracksForBounds);
+        let bounds = { ...naturalBounds };
+
+        if (displayOptions.crop.enabled) {
+          const center = computeCropCenter();
+          const halfSize = (displayOptions.crop.size || 1) / 2;
+          bounds = {
+            minPrimary: center.primary - halfSize,
+            maxPrimary: center.primary + halfSize,
+            minSecondary: center.secondary - halfSize,
+            maxSecondary: center.secondary + halfSize,
+          };
+        }
+
         const spanPrimary = bounds.maxPrimary - bounds.minPrimary || 1;
         const spanSecondary = bounds.maxSecondary - bounds.minSecondary || 1;
         const scale = Math.min(width / spanPrimary, height / spanSecondary);
+
         const context = {
           bounds,
           margin,
@@ -1098,6 +1618,25 @@
         };
 
         lastRenderContext = { ...context, axisMode };
+
+        const cropRect =
+          displayOptions.crop.enabled && displayOptions.crop.size > 0
+            ? computeCropRect(context)
+            : null;
+        let clippingApplied = false;
+        if (
+          cropRect &&
+          Number.isFinite(cropRect.width) &&
+          Number.isFinite(cropRect.height) &&
+          cropRect.width > 0 &&
+          cropRect.height > 0
+        ) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
+          ctx.clip();
+          clippingApplied = true;
+        }
 
         ctx.save();
         ctx.strokeStyle = "#e0e0e0";
@@ -1148,7 +1687,11 @@
           );
         });
 
-        if (reachOptions.enabled && reachOptions.radius > 0) {
+        if (
+          reachOptions.enabled &&
+          reachOptions.radius > 0 &&
+          displayOptions.showEscapeCircle
+        ) {
           drawReachCircle(context);
         }
 
@@ -1161,6 +1704,21 @@
         ctx.fillStyle = "#2c3e50";
         ctx.font = "12px system-ui";
         ctx.fillText("origin", origin.x + 10, origin.y - 8);
+
+        if (clippingApplied) {
+          ctx.restore();
+        }
+
+        if (cropRect && cropRect.width > 0 && cropRect.height > 0) {
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = "rgba(52, 152, 219, 0.6)";
+          ctx.setLineDash([6, 4]);
+          ctx.strokeRect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
       }
 
       function projectOffset(offset) {
@@ -1178,6 +1736,43 @@
           context.margin +
           (context.bounds.maxSecondary - secondary) * context.scale;
         return applyViewTransform(baseX, baseY);
+      }
+
+      function computeCropCenter() {
+        if (displayOptions.crop.centerMode === "escape" && reachOptions.enabled) {
+          return {
+            primary: reachOptions.target.x,
+            secondary:
+              axisMode === "xz" ? reachOptions.target.z : reachOptions.target.y,
+          };
+        }
+        const active = getActiveTrack();
+        if (active && active.offsets && active.offsets.length) {
+          const first = active.offsets[0];
+          return {
+            primary: first.dx,
+            secondary: axisMode === "xz" ? first.dz : first.dy,
+          };
+        }
+        return { primary: 0, secondary: 0 };
+      }
+
+      function computeCropRect(context) {
+        const topLeft = projectedToCanvas(
+          context.bounds.minPrimary,
+          context.bounds.maxSecondary,
+          context
+        );
+        const bottomRight = projectedToCanvas(
+          context.bounds.maxPrimary,
+          context.bounds.minSecondary,
+          context
+        );
+        const x = Math.min(topLeft.x, bottomRight.x);
+        const y = Math.min(topLeft.y, bottomRight.y);
+        const width = Math.abs(bottomRight.x - topLeft.x);
+        const height = Math.abs(bottomRight.y - topLeft.y);
+        return { x, y, width, height };
       }
 
       function applyViewTransform(x, y) {
@@ -1219,22 +1814,24 @@
 
         const isHovered = hoveredTrackId === track.id;
 
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        applyPathTransform(context);
-        ctx.strokeStyle = track.color;
-        ctx.globalAlpha = isActive || isHovered ? 1 : 0.55;
-        ctx.lineJoin = "round";
-        const baseWidth = isActive ? 2.5 : 1.8;
-        const widthBoost = isHovered && !isActive ? 1.45 : isHovered ? 1.2 : 1;
-        const scaleFactor = context.scale * viewState.zoom || 1;
-        ctx.lineWidth = (baseWidth * widthBoost) / scaleFactor;
-        if (isHovered) {
-          ctx.shadowColor = track.color;
-          ctx.shadowBlur = 6 / Math.max(viewState.zoom, 0.5);
+        if (displayOptions.showPaths) {
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          applyPathTransform(context);
+          ctx.strokeStyle = track.color;
+          ctx.globalAlpha = isActive || isHovered ? 1 : 0.55;
+          ctx.lineJoin = "round";
+          const baseWidth = isActive ? 2.5 : 1.8;
+          const widthBoost = isHovered && !isActive ? 1.45 : isHovered ? 1.2 : 1;
+          const scaleFactor = context.scale * viewState.zoom || 1;
+          ctx.lineWidth = (baseWidth * widthBoost) / scaleFactor;
+          if (isHovered) {
+            ctx.shadowColor = track.color;
+            ctx.shadowBlur = 6 / Math.max(viewState.zoom, 0.5);
+          }
+          ctx.stroke(projection.path);
+          ctx.restore();
         }
-        ctx.stroke(projection.path);
-        ctx.restore();
 
         const safeIndex = Math.min(
           Math.max(highlightIndex, 0),
