@@ -87,6 +87,24 @@
         opacity: 0.5;
         cursor: not-allowed;
       }
+      .summary-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 12px 0;
+        font-size: 0.9rem;
+        color: #333;
+      }
+      .summary-options label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+      }
+      .summary-options input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+      }
       #status {
         margin-top: 12px;
         color: #8e44ad;
@@ -179,6 +197,12 @@
 
     <div id="resultsPanel" class="panel hidden">
       <h2>概要</h2>
+      <div class="summary-options">
+        <label>
+          <input type="checkbox" id="hideNoEscape" />
+          脱出しなかったトラックを除外
+        </label>
+      </div>
       <div class="export-controls">
         <button id="exportSummary" type="button" disabled>
           概要をCSV出力
@@ -208,10 +232,16 @@
       const eventsContainer = document.getElementById("eventsContainer");
       const exportSummaryButton = document.getElementById("exportSummary");
       const exportEventsButton = document.getElementById("exportEvents");
+      const hideNoEscapeCheckbox = document.getElementById("hideNoEscape");
 
       let tracks = [];
       let lastSummaryTable = { headers: [], rows: [] };
       let lastEventsTable = { headers: [], rows: [] };
+      let lastAnalyses = [];
+      const summaryPreferences = {
+        hideNoEscape: false,
+      };
+      summaryPreferences.hideNoEscape = hideNoEscapeCheckbox.checked;
 
       fileInput.addEventListener("change", async (event) => {
         await loadTracks(event.target.files);
@@ -240,6 +270,11 @@
           return;
         }
         exportCsv("escape-events.csv", lastEventsTable);
+      });
+
+      hideNoEscapeCheckbox.addEventListener("change", () => {
+        summaryPreferences.hideNoEscape = hideNoEscapeCheckbox.checked;
+        renderTables();
       });
 
       syncExportState();
@@ -302,19 +337,37 @@
       function runAnalysis() {
         const options = readOptions();
         const analyses = tracks.map((track) => analyzeTrack(track, options));
-        const summaryTable = buildSummaryTableData(analyses);
-        const eventsTable = buildEventTableData(analyses);
+        lastAnalyses = analyses;
+        renderTables();
+        resultsPanel.classList.remove("hidden");
+      }
+
+      function renderTables() {
+        if (!lastAnalyses.length) {
+          lastSummaryTable = { headers: [], rows: [] };
+          lastEventsTable = { headers: [], rows: [] };
+          summaryContainer.innerHTML = "<p>データがありません。</p>";
+          eventsContainer.innerHTML =
+            "<p>脱出イベントは検出されませんでした。</p>";
+          syncExportState();
+          return;
+        }
+        const summaryTable = buildSummaryTableData(
+          lastAnalyses,
+          summaryPreferences
+        );
+        const eventsTable = buildEventTableData(lastAnalyses);
         lastSummaryTable = summaryTable;
         lastEventsTable = eventsTable;
-        renderSummary(summaryTable);
+        renderSummary(summaryTable, summaryPreferences);
         renderEvents(eventsTable);
         syncExportState();
-        resultsPanel.classList.remove("hidden");
       }
 
       function resetResults() {
         lastSummaryTable = { headers: [], rows: [] };
         lastEventsTable = { headers: [], rows: [] };
+        lastAnalyses = [];
         summaryContainer.innerHTML = "";
         eventsContainer.innerHTML = "";
         resultsPanel.classList.add("hidden");
@@ -495,7 +548,7 @@
         };
       }
 
-      function buildSummaryTableData(analyses) {
+      function buildSummaryTableData(analyses, options = {}) {
         if (!analyses.length) {
           return { headers: [], rows: [] };
         }
@@ -514,7 +567,13 @@
           "最大距離時刻",
           "最大距離オフセット",
         ];
-        const rows = analyses.map((analysis) => {
+        const relevant = options.hideNoEscape
+          ? analyses.filter((analysis) => analysis.events.length > 0)
+          : analyses;
+        if (!relevant.length) {
+          return { headers, rows: [] };
+        }
+        const rows = relevant.map((analysis) => {
           const firstEvent = analysis.events[0] || null;
           const firstInsideDuration = firstEvent
             ? firstEvent.durationInside
@@ -574,9 +633,11 @@
         return { headers, rows };
       }
 
-      function renderSummary(table) {
+      function renderSummary(table, options = {}) {
         if (!table.rows.length) {
-          summaryContainer.innerHTML = "<p>データがありません。</p>";
+          summaryContainer.innerHTML = options.hideNoEscape
+            ? "<p>脱出したトラックがありません。</p>"
+            : "<p>データがありません。</p>";
           return;
         }
         const headerHtml = table.headers
