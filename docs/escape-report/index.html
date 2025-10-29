@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Escape Time Report</title>
+    <style>
+      :root {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        color: #1b1b1b;
+        background-color: #f7f7f7;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        min-height: 100vh;
+        box-sizing: border-box;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.6rem;
+      }
+      h2 {
+        margin: 12px 0;
+        font-size: 1.1rem;
+      }
+      p {
+        margin: 0;
+        color: #555;
+      }
+      label {
+        font-weight: 600;
+        display: inline-flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-start;
+      }
+      .panel {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        padding: 20px 24px;
+      }
+      .loader-area {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .loader-area input[type="file"] {
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        padding: 6px;
+        background: #fafafa;
+      }
+      .options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .options label input {
+        width: 120px;
+        padding: 4px 6px;
+        border-radius: 4px;
+        border: 1px solid #bbb;
+        background: #fff;
+      }
+      .export-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 12px 0;
+      }
+      .export-controls button {
+        padding: 6px 12px;
+        font-size: 0.95rem;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 1px solid #bbb;
+        background: #fafafa;
+      }
+      .export-controls button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #status {
+        margin-top: 12px;
+        color: #8e44ad;
+        white-space: pre-wrap;
+      }
+      .table-wrapper {
+        overflow-x: auto;
+        border-radius: 8px;
+        border: 1px solid #eee;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 760px;
+      }
+      thead {
+        background: #f0f0f0;
+      }
+      th,
+      td {
+        padding: 10px 12px;
+        text-align: left;
+        border-bottom: 1px solid #e5e5e5;
+        font-size: 0.92rem;
+        color: #333;
+      }
+      tbody tr:nth-child(even) {
+        background: #fafafa;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, SFMono, Menlo, Monaco,
+          Consolas, "Liberation Mono", "Courier New", monospace;
+        background: #f1f1f1;
+        padding: 2px 4px;
+        border-radius: 4px;
+      }
+      .note {
+        margin-top: 8px;
+        font-size: 0.85rem;
+        color: #777;
+      }
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <h1>Escape Time Report</h1>
+      <p>
+        CSV または JSON 形式の座標ログを読み込み、指定した中心と半径から
+        どれくらいで範囲外へ出たかを集計します。
+      </p>
+      <div class="loader-area">
+        <label>
+          ファイルを選択
+          <input
+            type="file"
+            id="fileInput"
+            accept=".json,.csv,application/json,text/csv"
+            multiple
+          />
+        </label>
+      </div>
+      <div class="options">
+        <label>
+          半径 (blocks)
+          <input type="number" id="radiusInput" value="5" min="0" step="0.5" />
+        </label>
+        <label>
+          中心 X (dx)
+          <input type="number" id="centerXInput" value="0" step="0.5" />
+        </label>
+        <label>
+          中心 Y (dy)
+          <input type="number" id="centerYInput" value="0" step="0.5" />
+        </label>
+        <label>
+          中心 Z (dz)
+          <input type="number" id="centerZInput" value="0" step="0.5" />
+        </label>
+      </div>
+      <p class="note">
+        CSV の列名は <code>step</code>/<code>time</code> などの時刻カラムと、
+        <code>x</code>/<code>y</code>/<code>z</code> を含めてください。
+        JSON は既存ビューアと同じ形式に対応しています。
+      </p>
+      <div id="status"></div>
+    </div>
+
+    <div id="resultsPanel" class="panel hidden">
+      <h2>概要</h2>
+      <div class="export-controls">
+        <button id="exportSummary" type="button" disabled>
+          概要をCSV出力
+        </button>
+        <button id="exportEvents" type="button" disabled>
+          イベントをCSV出力
+        </button>
+      </div>
+      <div id="summaryContainer" class="table-wrapper"></div>
+      <h2>エスケープイベント一覧</h2>
+      <div id="eventsContainer" class="table-wrapper"></div>
+      <p class="note">
+        秒換算は 20 tick = 1 秒として計算しています。測定データの実際の tick
+        レートが異なる場合は読み替えてください。
+      </p>
+    </div>
+
+    <script>
+      const fileInput = document.getElementById("fileInput");
+      const radiusInput = document.getElementById("radiusInput");
+      const centerXInput = document.getElementById("centerXInput");
+      const centerYInput = document.getElementById("centerYInput");
+      const centerZInput = document.getElementById("centerZInput");
+      const statusBox = document.getElementById("status");
+      const resultsPanel = document.getElementById("resultsPanel");
+      const summaryContainer = document.getElementById("summaryContainer");
+      const eventsContainer = document.getElementById("eventsContainer");
+      const exportSummaryButton = document.getElementById("exportSummary");
+      const exportEventsButton = document.getElementById("exportEvents");
+
+      let tracks = [];
+      let lastSummaryTable = { headers: [], rows: [] };
+      let lastEventsTable = { headers: [], rows: [] };
+
+      fileInput.addEventListener("change", async (event) => {
+        await loadTracks(event.target.files);
+      });
+
+      [radiusInput, centerXInput, centerYInput, centerZInput].forEach(
+        (input) => {
+          input.addEventListener("input", () => {
+            if (!tracks.length) {
+              return;
+            }
+            runAnalysis();
+          });
+        }
+      );
+
+      exportSummaryButton.addEventListener("click", () => {
+        if (!lastSummaryTable.rows.length) {
+          return;
+        }
+        exportCsv("escape-summary.csv", lastSummaryTable);
+      });
+
+      exportEventsButton.addEventListener("click", () => {
+        if (!lastEventsTable.rows.length) {
+          return;
+        }
+        exportCsv("escape-events.csv", lastEventsTable);
+      });
+
+      syncExportState();
+
+      async function loadTracks(fileList) {
+        tracks = [];
+        statusBox.textContent = "";
+        if (!fileList || !fileList.length) {
+          resetResults();
+          statusBox.textContent = "ファイルを選択してください。";
+          return;
+        }
+
+        const files = Array.from(fileList);
+        const errors = [];
+        let counter = 0;
+
+        for (const file of files) {
+          const lower = file.name.toLowerCase();
+          if (!lower.endsWith(".json") && !lower.endsWith(".csv")) {
+            errors.push(`${file.name}: 未対応の拡張子です`);
+            continue;
+          }
+          try {
+            const text = await file.text();
+            const raw = lower.endsWith(".json")
+              ? JSON.parse(text)
+              : parseCsv(text);
+            const timeline = extractTimeline(raw);
+            if (!timeline.length) {
+              errors.push(`${file.name}: 座標データが見つかりませんでした`);
+              continue;
+            }
+            tracks.push({
+              id: `track-${counter++}`,
+              name: file.webkitRelativePath || file.name,
+              timeline,
+              offsets: buildOffsets(timeline),
+            });
+          } catch (err) {
+            console.error("Failed to parse", file.name, err);
+            errors.push(`${file.name}: 読み込みに失敗しました`);
+          }
+        }
+
+        if (!tracks.length) {
+          resetResults();
+          statusBox.textContent =
+            errors.length > 0
+              ? errors.join("\n")
+              : "処理できるファイルがありませんでした。";
+          return;
+        }
+
+        statusBox.textContent =
+          errors.length > 0 ? errors.join("\n") : "";
+        runAnalysis();
+      }
+
+      function runAnalysis() {
+        const options = readOptions();
+        const analyses = tracks.map((track) => analyzeTrack(track, options));
+        const summaryTable = buildSummaryTableData(analyses);
+        const eventsTable = buildEventTableData(analyses);
+        lastSummaryTable = summaryTable;
+        lastEventsTable = eventsTable;
+        renderSummary(summaryTable);
+        renderEvents(eventsTable);
+        syncExportState();
+        resultsPanel.classList.remove("hidden");
+      }
+
+      function resetResults() {
+        lastSummaryTable = { headers: [], rows: [] };
+        lastEventsTable = { headers: [], rows: [] };
+        summaryContainer.innerHTML = "";
+        eventsContainer.innerHTML = "";
+        resultsPanel.classList.add("hidden");
+        syncExportState();
+      }
+
+      function syncExportState() {
+        exportSummaryButton.disabled = !lastSummaryTable.rows.length;
+        exportEventsButton.disabled = !lastEventsTable.rows.length;
+      }
+
+      function readOptions() {
+        const radiusRaw = Number(radiusInput.value);
+        const radius = Number.isFinite(radiusRaw)
+          ? Math.max(0, radiusRaw)
+          : 0;
+        if (!Number.isFinite(radiusRaw)) {
+          radiusInput.value = "0";
+        } else if (radius !== radiusRaw) {
+          radiusInput.value = String(radius);
+        }
+        return {
+          radius,
+          target: {
+            x: parseNumeric(centerXInput, 0),
+            y: parseNumeric(centerYInput, 0),
+            z: parseNumeric(centerZInput, 0),
+          },
+        };
+      }
+
+      function parseNumeric(input, fallback = 0) {
+        const raw = Number(input.value);
+        if (Number.isFinite(raw)) {
+          return raw;
+        }
+        input.value = String(fallback);
+        return fallback;
+      }
+
+      function analyzeTrack(track, options) {
+        const { timeline, offsets } = track;
+        const pointCount = timeline.length;
+        const radius = options.radius;
+        const radiusSq = radius * radius;
+        const epsilon = Math.max(1e-6, radiusSq * 1e-4);
+        const target = options.target;
+        let maxDistanceSq = 0;
+        let maxDistanceIndex = 0;
+        let inside = false;
+        let insideStartIndex = null;
+        let lastInsideIndex = null;
+        const events = [];
+
+        offsets.forEach((offset, index) => {
+          const dx = offset.dx - target.x;
+          const dy = offset.dy - target.y;
+          const dz = offset.dz - target.z;
+          const distSq = dx * dx + dy * dy + dz * dz;
+          if (distSq > maxDistanceSq) {
+            maxDistanceSq = distSq;
+            maxDistanceIndex = index;
+          }
+          const insideNow = distSq <= radiusSq + epsilon;
+          if (insideNow) {
+            if (!inside) {
+              inside = true;
+              insideStartIndex = index;
+            }
+            lastInsideIndex = index;
+            return;
+          }
+          if (inside) {
+            const exitIndex = index;
+            const event = buildEvent(
+              track,
+              insideStartIndex,
+              lastInsideIndex,
+              exitIndex,
+              distSq,
+              target
+            );
+            events.push(event);
+            inside = false;
+            insideStartIndex = null;
+            lastInsideIndex = null;
+          }
+        });
+
+        const first = timeline[0];
+        const last = timeline[pointCount - 1];
+        const maxDistance = Math.sqrt(maxDistanceSq);
+        const maxOffsets = offsets[maxDistanceIndex] || null;
+        const maxAbsolute = timeline[maxDistanceIndex] || null;
+        const firstNumeric = first ? first.numericTimestamp : NaN;
+
+        let firstEscapeFromStart = NaN;
+        if (events.length && Number.isFinite(firstNumeric)) {
+          const firstExitNum = events[0].exitNumeric;
+          if (Number.isFinite(firstExitNum)) {
+            firstEscapeFromStart = firstExitNum - firstNumeric;
+          }
+        }
+
+        return {
+          id: track.id,
+          name: track.name,
+          pointCount,
+          firstTimestamp: first ? first.originalTimestamp : "-",
+          lastTimestamp: last ? last.originalTimestamp : "-",
+          firstNumeric,
+          lastNumeric: last ? last.numericTimestamp : NaN,
+          events,
+          firstEscapeFromStart,
+          maxDistance,
+          maxOffsets,
+          maxAbsolute,
+          maxDistanceTimestamp: maxAbsolute
+            ? maxAbsolute.originalTimestamp
+            : "-",
+        };
+      }
+
+      function buildEvent(
+        track,
+        insideStartIndex,
+        lastInsideIndex,
+        exitIndex,
+        exitDistSq,
+        target
+      ) {
+        const { timeline, offsets } = track;
+        const startIndex =
+          Number.isInteger(insideStartIndex) && insideStartIndex >= 0
+            ? insideStartIndex
+            : lastInsideIndex;
+        const lastInside =
+          Number.isInteger(lastInsideIndex) && lastInsideIndex >= 0
+            ? lastInsideIndex
+            : startIndex;
+        const enter = timeline[startIndex] || null;
+        const exit = timeline[exitIndex] || null;
+        const lastInsideEntry = timeline[lastInside] || null;
+        const enterNumeric = enter ? enter.numericTimestamp : NaN;
+        const exitNumeric = exit ? exit.numericTimestamp : NaN;
+        const durationInside = Number.isFinite(enterNumeric) &&
+          Number.isFinite(exitNumeric)
+          ? exitNumeric - enterNumeric
+          : NaN;
+        const exitOffsets = offsets[exitIndex] || { dx: NaN, dy: NaN, dz: NaN };
+        const lastInsideOffsets =
+          offsets[lastInside] || { dx: NaN, dy: NaN, dz: NaN };
+        const dx = exitOffsets.dx - target.x;
+        const dy = exitOffsets.dy - target.y;
+        const dz = exitOffsets.dz - target.z;
+        const exitDistance = Math.sqrt(
+          Number.isFinite(exitDistSq) ? exitDistSq : dx * dx + dy * dy + dz * dz
+        );
+
+        return {
+          enterTimestamp: enter ? enter.originalTimestamp : "-",
+          exitTimestamp: exit ? exit.originalTimestamp : "-",
+          lastInsideTimestamp: lastInsideEntry
+            ? lastInsideEntry.originalTimestamp
+            : "-",
+          enterNumeric,
+          exitNumeric,
+          durationInside,
+          exitDistance,
+          exitOffsets,
+          exitAbsolute: exit
+            ? { x: exit.x, y: exit.y, z: exit.z }
+            : { x: NaN, y: NaN, z: NaN },
+          lastInsideOffsets,
+          lastInsideAbsolute: lastInsideEntry
+            ? { x: lastInsideEntry.x, y: lastInsideEntry.y, z: lastInsideEntry.z }
+            : { x: NaN, y: NaN, z: NaN },
+        };
+      }
+
+      function buildSummaryTableData(analyses) {
+        if (!analyses.length) {
+          return { headers: [], rows: [] };
+        }
+        const headers = [
+          "ファイル",
+          "点数",
+          "開始時刻",
+          "終了時刻",
+          "脱出回数",
+          "最初の脱出 (tick)",
+          "最初の脱出 (sec)",
+          "直前滞在 (tick)",
+          "直前滞在 (sec)",
+          "初回脱出距離",
+          "最大距離",
+          "最大距離時刻",
+          "最大距離オフセット",
+        ];
+        const rows = analyses.map((analysis) => {
+          const firstEvent = analysis.events[0] || null;
+          const firstInsideDuration = firstEvent
+            ? firstEvent.durationInside
+            : NaN;
+          const escapeDistance = firstEvent ? firstEvent.exitDistance : NaN;
+          return [
+            analysis.name ?? "",
+            String(analysis.pointCount),
+            analysis.firstTimestamp ?? "-",
+            analysis.lastTimestamp ?? "-",
+            String(analysis.events.length),
+            formatTicks(analysis.firstEscapeFromStart),
+            formatSeconds(analysis.firstEscapeFromStart),
+            formatTicks(firstInsideDuration),
+            formatSeconds(firstInsideDuration),
+            formatDistance(escapeDistance),
+            formatDistance(analysis.maxDistance),
+            analysis.maxDistanceTimestamp ?? "-",
+            formatOffsets(analysis.maxOffsets),
+          ];
+        });
+        return { headers, rows };
+      }
+
+      function buildEventTableData(analyses) {
+        const headers = [
+          "ファイル",
+          "#",
+          "滞在開始",
+          "最後の内側",
+          "脱出時刻",
+          "滞在時間 (tick)",
+          "滞在時間 (sec)",
+          "脱出距離",
+          "最後の内側オフセット",
+          "脱出時オフセット",
+          "脱出時座標 (絶対)",
+        ];
+        const rows = [];
+        analyses.forEach((analysis) => {
+          analysis.events.forEach((event, index) => {
+            rows.push([
+              analysis.name ?? "",
+              String(index + 1),
+              event.enterTimestamp ?? "-",
+              event.lastInsideTimestamp ?? "-",
+              event.exitTimestamp ?? "-",
+              formatTicks(event.durationInside),
+              formatSeconds(event.durationInside),
+              formatDistance(event.exitDistance),
+              formatOffsets(event.lastInsideOffsets),
+              formatOffsets(event.exitOffsets),
+              formatAbsolute(event.exitAbsolute),
+            ]);
+          });
+        });
+        return { headers, rows };
+      }
+
+      function renderSummary(table) {
+        if (!table.rows.length) {
+          summaryContainer.innerHTML = "<p>データがありません。</p>";
+          return;
+        }
+        const headerHtml = table.headers
+          .map((header) => `<th>${escapeHtml(String(header ?? ""))}</th>`)
+          .join("");
+        const rowsHtml = table.rows
+          .map((row) => {
+            const cells = row
+              .map((cell) => `<td>${escapeHtml(String(cell ?? ""))}</td>`)
+              .join("");
+            return `<tr>${cells}</tr>`;
+          })
+          .join("");
+        summaryContainer.innerHTML = `
+          <table>
+            <thead>
+              <tr>${headerHtml}</tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        `;
+      }
+
+      function renderEvents(table) {
+        if (!table.rows.length) {
+          eventsContainer.innerHTML =
+            "<p>脱出イベントは検出されませんでした。</p>";
+          return;
+        }
+        const headerHtml = table.headers
+          .map((header) => `<th>${escapeHtml(String(header ?? ""))}</th>`)
+          .join("");
+        const rowsHtml = table.rows
+          .map((row) => {
+            const cells = row
+              .map((cell) => `<td>${escapeHtml(String(cell ?? ""))}</td>`)
+              .join("");
+            return `<tr>${cells}</tr>`;
+          })
+          .join("");
+        eventsContainer.innerHTML = `
+          <table>
+            <thead>
+              <tr>${headerHtml}</tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        `;
+      }
+
+      function exportCsv(filename, table) {
+        if (!table || !table.headers.length) {
+          return;
+        }
+        const lines = [];
+        lines.push(table.headers.map(escapeCsvValue).join(","));
+        table.rows.forEach((row) => {
+          lines.push(row.map(escapeCsvValue).join(","));
+        });
+        const csv = "\uFEFF" + lines.join("\r\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+        downloadBlob(blob, filename);
+      }
+
+      function escapeCsvValue(value) {
+        if (value === null || value === undefined) {
+          return "";
+        }
+        const stringValue = String(value);
+        if (/[",\r\n]/.test(stringValue)) {
+          return `"${stringValue.replace(/"/g, '""')}"`;
+        }
+        return stringValue;
+      }
+
+      function downloadBlob(blob, filename) {
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.download = filename;
+        link.rel = "noopener";
+        link.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+        }, 1000);
+      }
+
+      function formatTicks(value) {
+        if (!Number.isFinite(value)) {
+          return "-";
+        }
+        return formatNumber(value, 2);
+      }
+
+      function formatSeconds(value) {
+        if (!Number.isFinite(value)) {
+          return "-";
+        }
+        return formatNumber(value / 20, 2);
+      }
+
+      function formatDistance(value) {
+        if (!Number.isFinite(value)) {
+          return "-";
+        }
+        return formatNumber(value, 3);
+      }
+
+      function formatOffsets(offsets) {
+        if (
+          !offsets ||
+          !["dx", "dy", "dz"].every((key) => Number.isFinite(offsets[key]))
+        ) {
+          return "-";
+        }
+        return `(${formatNumber(offsets.dx, 2)}, ${formatNumber(
+          offsets.dy,
+          2
+        )}, ${formatNumber(offsets.dz, 2)})`;
+      }
+
+      function formatAbsolute(position) {
+        if (
+          !position ||
+          !["x", "y", "z"].every((key) => Number.isFinite(position[key]))
+        ) {
+          return "-";
+        }
+        return `(${formatNumber(position.x, 2)}, ${formatNumber(
+          position.y,
+          2
+        )}, ${formatNumber(position.z, 2)})`;
+      }
+
+      function formatNumber(value, fractionDigits) {
+        if (!Number.isFinite(value)) {
+          return "-";
+        }
+        const fixed = value.toFixed(fractionDigits);
+        const numeric = Number(fixed);
+        return Number.isInteger(numeric) ? String(numeric) : fixed;
+      }
+
+      function escapeHtml(value) {
+        if (typeof value !== "string") {
+          return String(value ?? "");
+        }
+        return value
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function parseCsv(text) {
+        const rows = [];
+        let field = "";
+        let row = [];
+        let inQuotes = false;
+        for (let i = 0; i < text.length; i += 1) {
+          const char = text[i];
+          if (inQuotes) {
+            if (char === '"') {
+              if (text[i + 1] === '"') {
+                field += '"';
+                i += 1;
+              } else {
+                inQuotes = false;
+              }
+            } else {
+              field += char;
+            }
+            continue;
+          }
+          if (char === '"') {
+            inQuotes = true;
+            continue;
+          }
+          if (char === ",") {
+            row.push(field.trim());
+            field = "";
+            continue;
+          }
+          if (char === "\n") {
+            row.push(field.trim());
+            if (row.some((value) => value.length > 0)) {
+              rows.push(row);
+            }
+            row = [];
+            field = "";
+            continue;
+          }
+          if (char === "\r") {
+            continue;
+          }
+          field += char;
+        }
+        row.push(field.trim());
+        if (row.some((value) => value.length > 0)) {
+          rows.push(row);
+        }
+        if (!rows.length) {
+          return [];
+        }
+        let headerIndex = rows.findIndex((cols) =>
+          cols.some((value) => value.length > 0)
+        );
+        if (headerIndex === -1) {
+          return [];
+        }
+        const header = rows[headerIndex].map((value, index) =>
+          index === 0 ? value.replace(/^\uFEFF/, "") : value
+        );
+        const dataRows = rows.slice(headerIndex + 1);
+        return dataRows
+          .filter((cols) => cols.some((value) => value.length > 0))
+          .map((cols) => {
+            const record = {};
+            header.forEach((key, index) => {
+              const columnKey = key || `column${index + 1}`;
+              record[columnKey] = cols[index] ?? "";
+            });
+            return record;
+          });
+      }
+
+      function extractTimeline(raw) {
+        const rows = [];
+
+        function pushEntry(entry, index, fallbackKey = null) {
+          const coords = extractCoordinates(entry);
+          if (!coords) {
+            return;
+          }
+          const timestamp = readTimestamp(entry, index, fallbackKey);
+          rows.push({
+            originalTimestamp: timestamp.display,
+            numericTimestamp: timestamp.numeric,
+            x: coords.x,
+            y: coords.y,
+            z: coords.z,
+          });
+        }
+
+        function processArray(array, baseKey = null) {
+          array.forEach((entry, index) => {
+            const fallbackKey = baseKey ? `${baseKey}[${index}]` : null;
+            pushEntry(entry, index, fallbackKey);
+          });
+        }
+
+        if (Array.isArray(raw)) {
+          processArray(raw);
+        } else if (raw && typeof raw === "object") {
+          Object.entries(raw).forEach(([key, value], index) => {
+            if (Array.isArray(value)) {
+              processArray(value, key);
+              return;
+            }
+            pushEntry(value, index, key);
+          });
+        }
+        const allNumeric = rows.every((row) =>
+          Number.isFinite(row.numericTimestamp)
+        );
+        if (allNumeric) {
+          rows.sort((a, b) => a.numericTimestamp - b.numericTimestamp);
+        }
+        return rows;
+      }
+
+      function extractCoordinates(entry) {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+        const direct = pickAxes(entry);
+        if (direct) {
+          return direct;
+        }
+        const coordinateWrappers = [
+          "coordinate",
+          "coordinates",
+          "coords",
+          "pos",
+          "position",
+          "location",
+          "loc",
+          "point",
+          "座標",
+        ];
+        for (const key of coordinateWrappers) {
+          if (entry[key] && typeof entry[key] === "object") {
+            const nested = pickAxes(entry[key]);
+            if (nested) {
+              return nested;
+            }
+          }
+        }
+        return null;
+      }
+
+      function pickAxes(candidate) {
+        if (!candidate || typeof candidate !== "object") {
+          return null;
+        }
+        const x = readAxis(candidate, ["x", "X"]);
+        const y = readAxis(candidate, ["y", "Y"]);
+        const z = readAxis(candidate, ["z", "Z"]);
+        if ([x, y, z].every((value) => Number.isFinite(value))) {
+          return { x, y, z };
+        }
+        return null;
+      }
+
+      function readAxis(obj, keys) {
+        for (const key of keys) {
+          if (typeof obj[key] === "number") {
+            return obj[key];
+          }
+          if (typeof obj[key] === "string") {
+            const numeric = Number(obj[key]);
+            if (Number.isFinite(numeric)) {
+              return numeric;
+            }
+          }
+        }
+        return NaN;
+      }
+
+      function readTimestamp(entry, index, fallbackKey = null) {
+        const candidates = [
+          "timestamp",
+          "time",
+          "tick",
+          "date",
+          "step",
+          "タイムスタンプ",
+        ];
+        for (const key of candidates) {
+          if (entry && Object.prototype.hasOwnProperty.call(entry, key)) {
+            const value = entry[key];
+            if (Number.isFinite(Number(value))) {
+              return { display: String(value), numeric: Number(value) };
+            }
+            return { display: String(value), numeric: index };
+          }
+        }
+        if (fallbackKey !== null) {
+          if (Number.isFinite(Number(fallbackKey))) {
+            return { display: fallbackKey, numeric: Number(fallbackKey) };
+          }
+          return { display: fallbackKey, numeric: index };
+        }
+        return { display: `#${index}`, numeric: index };
+      }
+
+      function buildOffsets(rows) {
+        const [first] = rows;
+        if (!first) {
+          return [];
+        }
+        return rows.map((row) => ({
+          dx: row.x - first.x,
+          dy: row.y - first.y,
+          dz: row.z - first.z,
+        }));
+      }
+    </script>
+  </body>
+</html>
