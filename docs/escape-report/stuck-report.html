@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <title>Escape Time Report</title>
+    <title>Stuck Detection Report</title>
     <style>
       :root {
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -69,24 +69,6 @@
         border: 1px solid #bbb;
         background: #fff;
       }
-      .export-controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin: 12px 0;
-      }
-      .export-controls button {
-        padding: 6px 12px;
-        font-size: 0.95rem;
-        border-radius: 6px;
-        cursor: pointer;
-        border: 1px solid #bbb;
-        background: #fafafa;
-      }
-      .export-controls button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
       .summary-options {
         display: flex;
         flex-wrap: wrap;
@@ -104,6 +86,24 @@
       .summary-options input[type="checkbox"] {
         width: 16px;
         height: 16px;
+      }
+      .export-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 12px 0;
+      }
+      .export-controls button {
+        padding: 6px 12px;
+        font-size: 0.95rem;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 1px solid #bbb;
+        background: #fafafa;
+      }
+      .export-controls button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
       #status {
         margin-top: 12px;
@@ -157,19 +157,40 @@
         color: #0b5ed7;
         text-decoration: none;
       }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin: 16px 0;
+      }
+      .stat-card {
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: #fafbff;
+      }
+      .stat-card strong {
+        display: block;
+        font-size: 1.5rem;
+        color: #111;
+      }
+      .stat-card span {
+        font-size: 0.9rem;
+        color: #555;
+      }
     </style>
   </head>
   <body>
     <div class="panel">
-      <h1>Escape Time Report</h1>
+      <h1>Stuck Detection Report</h1>
       <p>
-        CSV または JSON 形式の座標ログを読み込み、指定した中心と半径から
-        どれくらいで範囲外へ出たかを集計します。
+        CSV / JSON ログから x-z 平面での 2D 変動を解析し、750 step 内における
+        標準偏差の大きい方が 2 以下になった区間を STUCK として検出します。
       </p>
       <div class="link-area">
         <a href="../index.html">座標ビューアに戻る</a>
         &nbsp;|&nbsp;
-        <a href="./stuck-report.html">STUCK解析はこちら</a>
+        <a href="./index.html">エスケープ解析はこちら</a>
       </div>
       <div class="loader-area">
         <label>
@@ -184,20 +205,18 @@
       </div>
       <div class="options">
         <label>
-          半径 (blocks)
-          <input type="number" id="radiusInput" value="5" min="0" step="0.5" />
+          ウィンドウサイズ (step)
+          <input type="number" id="windowSizeInput" value="750" min="50" />
         </label>
         <label>
-          中心 X (dx)
-          <input type="number" id="centerXInput" value="0" step="0.5" />
-        </label>
-        <label>
-          中心 Y (dy)
-          <input type="number" id="centerYInput" value="0" step="0.5" />
-        </label>
-        <label>
-          中心 Z (dz)
-          <input type="number" id="centerZInput" value="0" step="0.5" />
+          標準偏差の閾値
+          <input
+            type="number"
+            id="stdThresholdInput"
+            value="2"
+            min="0"
+            step="0.1"
+          />
         </label>
       </div>
       <p class="note">
@@ -212,84 +231,101 @@
       <h2>概要</h2>
       <div class="summary-options">
         <label>
-          <input type="checkbox" id="hideNoEscape" />
-          脱出しなかったトラックを除外
+          <input type="checkbox" id="hideNoStuck" />
+          STUCK がないトラックを除外
         </label>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span>STUCK総回数</span>
+          <strong id="totalStuckCount">-</strong>
+        </div>
+        <div class="stat-card">
+          <span>STUCK経験トラック数</span>
+          <strong id="stuckEpisodeCount">-</strong>
+        </div>
+        <div class="stat-card">
+          <span>読み込んだトラック数</span>
+          <strong id="totalTrackCount">-</strong>
+        </div>
+        <div class="stat-card">
+          <span>ポイント不足トラック数</span>
+          <strong id="insufficientTrackCount">-</strong>
+        </div>
       </div>
       <div class="export-controls">
         <button id="exportSummary" type="button" disabled>
           概要をCSV出力
         </button>
         <button id="exportEvents" type="button" disabled>
-          イベントをCSV出力
+          STUCKイベントをCSV出力
         </button>
       </div>
       <div id="summaryContainer" class="table-wrapper"></div>
-      <h2>エスケープイベント一覧</h2>
+      <h2>STUCKイベント一覧</h2>
       <div id="eventsContainer" class="table-wrapper"></div>
       <p class="note">
-        秒換算は 20 tick = 1 秒として計算しています。測定データの実際の tick
-        レートが異なる場合は読み替えてください。
+        秒換算は 20 tick = 1 秒として計算しています。ウィンドウサイズと閾値は
+        解析途中でも変更できます。
       </p>
     </div>
 
     <script>
       const fileInput = document.getElementById("fileInput");
-      const radiusInput = document.getElementById("radiusInput");
-      const centerXInput = document.getElementById("centerXInput");
-      const centerYInput = document.getElementById("centerYInput");
-      const centerZInput = document.getElementById("centerZInput");
+      const windowSizeInput = document.getElementById("windowSizeInput");
+      const stdThresholdInput = document.getElementById("stdThresholdInput");
       const statusBox = document.getElementById("status");
       const resultsPanel = document.getElementById("resultsPanel");
       const summaryContainer = document.getElementById("summaryContainer");
       const eventsContainer = document.getElementById("eventsContainer");
       const exportSummaryButton = document.getElementById("exportSummary");
       const exportEventsButton = document.getElementById("exportEvents");
-      const hideNoEscapeCheckbox = document.getElementById("hideNoEscape");
+      const hideNoStuckCheckbox = document.getElementById("hideNoStuck");
+      const totalStuckCountBox = document.getElementById("totalStuckCount");
+      const stuckEpisodeCountBox = document.getElementById("stuckEpisodeCount");
+      const totalTrackCountBox = document.getElementById("totalTrackCount");
+      const insufficientTrackCountBox = document.getElementById(
+        "insufficientTrackCount"
+      );
 
       let tracks = [];
+      let lastAnalyses = [];
       let lastSummaryTable = { headers: [], rows: [] };
       let lastEventsTable = { headers: [], rows: [] };
-      let lastAnalyses = [];
-      const summaryPreferences = {
-        hideNoEscape: false,
-      };
-      summaryPreferences.hideNoEscape = hideNoEscapeCheckbox.checked;
+
+      const summaryPreferences = { hideNoStuck: false };
 
       fileInput.addEventListener("change", async (event) => {
         await loadTracks(event.target.files);
       });
 
-      [radiusInput, centerXInput, centerYInput, centerZInput].forEach(
-        (input) => {
-          input.addEventListener("input", () => {
-            if (!tracks.length) {
-              return;
-            }
-            runAnalysis();
-          });
-        }
-      );
-
-      exportSummaryButton.addEventListener("click", () => {
-        if (!lastSummaryTable.rows.length) {
-          return;
-        }
-        exportCsv("escape-summary.csv", lastSummaryTable);
+      [windowSizeInput, stdThresholdInput].forEach((input) => {
+        input.addEventListener("input", () => {
+          if (!tracks.length) {
+            return;
+          }
+          runAnalysis();
+        });
       });
 
-      exportEventsButton.addEventListener("click", () => {
-        if (!lastEventsTable.rows.length) {
-          return;
-        }
-        exportCsv("escape-events.csv", lastEventsTable);
-      });
-
-      hideNoEscapeCheckbox.addEventListener("change", () => {
-        summaryPreferences.hideNoEscape = hideNoEscapeCheckbox.checked;
+      hideNoStuckCheckbox.addEventListener("change", () => {
+        summaryPreferences.hideNoStuck = hideNoStuckCheckbox.checked;
         renderTables();
       });
 
+      exportSummaryButton.addEventListener("click", () => {
+        if (lastSummaryTable.rows.length) {
+          exportCsv("stuck-summary.csv", lastSummaryTable);
+        }
+      });
+
+      exportEventsButton.addEventListener("click", () => {
+        if (lastEventsTable.rows.length) {
+          exportCsv("stuck-events.csv", lastEventsTable);
+        }
+      });
+
+      summaryPreferences.hideNoStuck = hideNoStuckCheckbox.checked;
       syncExportState();
 
       async function loadTracks(fileList) {
@@ -325,7 +361,6 @@
               id: `track-${counter++}`,
               name: file.webkitRelativePath || file.name,
               timeline,
-              offsets: buildOffsets(timeline),
             });
           } catch (err) {
             console.error("Failed to parse", file.name, err);
@@ -349,41 +384,63 @@
 
       function runAnalysis() {
         const options = readOptions();
-        const analyses = tracks.map((track) => analyzeTrack(track, options));
-        lastAnalyses = analyses;
+        lastAnalyses = tracks.map((track) => analyzeTrack(track, options));
         renderTables();
         resultsPanel.classList.remove("hidden");
       }
 
-      function renderTables() {
-        if (!lastAnalyses.length) {
-          lastSummaryTable = { headers: [], rows: [] };
-          lastEventsTable = { headers: [], rows: [] };
-          summaryContainer.innerHTML = "<p>データがありません。</p>";
-          eventsContainer.innerHTML =
-            "<p>脱出イベントは検出されませんでした。</p>";
-          syncExportState();
-          return;
+      function readOptions() {
+        const windowRaw = Number(windowSizeInput.value);
+        const thresholdRaw = Number(stdThresholdInput.value);
+        const windowSize = Number.isFinite(windowRaw)
+          ? Math.max(2, Math.floor(windowRaw))
+          : 750;
+        const stdThreshold = Number.isFinite(thresholdRaw)
+          ? Math.max(0, thresholdRaw)
+          : 2;
+
+        if (windowSize !== windowRaw) {
+          windowSizeInput.value = String(windowSize);
         }
-        const summaryTable = buildSummaryTableData(
-          lastAnalyses,
-          summaryPreferences
-        );
-        const eventsTable = buildEventTableData(lastAnalyses);
-        lastSummaryTable = summaryTable;
-        lastEventsTable = eventsTable;
-        renderSummary(summaryTable, summaryPreferences);
-        renderEvents(eventsTable);
-        syncExportState();
+        if (stdThreshold !== thresholdRaw) {
+          stdThresholdInput.value = String(stdThreshold);
+        }
+
+        return {
+          windowSize,
+          stdThreshold,
+        };
       }
 
       function resetResults() {
+        lastAnalyses = [];
         lastSummaryTable = { headers: [], rows: [] };
         lastEventsTable = { headers: [], rows: [] };
-        lastAnalyses = [];
         summaryContainer.innerHTML = "";
         eventsContainer.innerHTML = "";
         resultsPanel.classList.add("hidden");
+        updateOverviewStats(null);
+        syncExportState();
+      }
+
+      function renderTables() {
+        if (!lastAnalyses.length) {
+          summaryContainer.innerHTML = "<p>データがありません。</p>";
+          eventsContainer.innerHTML = "<p>STUCKイベントはありません。</p>";
+          lastSummaryTable = { headers: [], rows: [] };
+          lastEventsTable = { headers: [], rows: [] };
+          updateOverviewStats(null);
+          syncExportState();
+          return;
+        }
+        updateOverviewStats(lastAnalyses);
+        lastSummaryTable = buildSummaryTableData(
+          lastAnalyses,
+          summaryPreferences
+        );
+        lastEventsTable = buildEventsTableData(lastAnalyses);
+        renderSummary(lastSummaryTable);
+        renderEvents(lastEventsTable);
         syncExportState();
       }
 
@@ -392,276 +449,79 @@
         exportEventsButton.disabled = !lastEventsTable.rows.length;
       }
 
-      function readOptions() {
-        const radiusRaw = Number(radiusInput.value);
-        const radius = Number.isFinite(radiusRaw)
-          ? Math.max(0, radiusRaw)
-          : 0;
-        if (!Number.isFinite(radiusRaw)) {
-          radiusInput.value = "0";
-        } else if (radius !== radiusRaw) {
-          radiusInput.value = String(radius);
+      function updateOverviewStats(analyses) {
+        if (!analyses || !analyses.length) {
+          totalStuckCountBox.textContent = "-";
+          stuckEpisodeCountBox.textContent = "-";
+          totalTrackCountBox.textContent = "-";
+          insufficientTrackCountBox.textContent = "-";
+          return;
         }
-        return {
-          radius,
-          target: {
-            x: parseNumeric(centerXInput, 0),
-            y: parseNumeric(centerYInput, 0),
-            z: parseNumeric(centerZInput, 0),
-          },
-        };
-      }
-
-      function parseNumeric(input, fallback = 0) {
-        const raw = Number(input.value);
-        if (Number.isFinite(raw)) {
-          return raw;
-        }
-        input.value = String(fallback);
-        return fallback;
-      }
-
-      function analyzeTrack(track, options) {
-        const { timeline, offsets } = track;
-        const pointCount = timeline.length;
-        const radius = options.radius;
-        const radiusSq = radius * radius;
-        const epsilon = Math.max(1e-6, radiusSq * 1e-4);
-        const target = options.target;
-        let maxDistanceSq = 0;
-        let maxDistanceIndex = 0;
-        let inside = false;
-        let insideStartIndex = null;
-        let lastInsideIndex = null;
-        const events = [];
-
-        offsets.forEach((offset, index) => {
-          const dx = offset.dx - target.x;
-          const dy = offset.dy - target.y;
-          const dz = offset.dz - target.z;
-          const distSq = dx * dx + dy * dy + dz * dz;
-          if (distSq > maxDistanceSq) {
-            maxDistanceSq = distSq;
-            maxDistanceIndex = index;
-          }
-          const insideNow = distSq <= radiusSq + epsilon;
-          if (insideNow) {
-            if (!inside) {
-              inside = true;
-              insideStartIndex = index;
-            }
-            lastInsideIndex = index;
-            return;
-          }
-          if (inside) {
-            const exitIndex = index;
-            const event = buildEvent(
-              track,
-              insideStartIndex,
-              lastInsideIndex,
-              exitIndex,
-              distSq,
-              target
-            );
-            events.push(event);
-            inside = false;
-            insideStartIndex = null;
-            lastInsideIndex = null;
-          }
-        });
-
-        const first = timeline[0];
-        const last = timeline[pointCount - 1];
-        const maxDistance = Math.sqrt(maxDistanceSq);
-        const maxOffsets = offsets[maxDistanceIndex] || null;
-        const maxAbsolute = timeline[maxDistanceIndex] || null;
-        const firstNumeric = first ? first.numericTimestamp : NaN;
-
-        let firstEscapeFromStart = NaN;
-        if (events.length && Number.isFinite(firstNumeric)) {
-          const firstExitNum = events[0].exitNumeric;
-          if (Number.isFinite(firstExitNum)) {
-            firstEscapeFromStart = firstExitNum - firstNumeric;
-          }
-        }
-
-        return {
-          id: track.id,
-          name: track.name,
-          pointCount,
-          firstTimestamp: first ? first.originalTimestamp : "-",
-          lastTimestamp: last ? last.originalTimestamp : "-",
-          firstNumeric,
-          lastNumeric: last ? last.numericTimestamp : NaN,
-          events,
-          firstEscapeFromStart,
-          maxDistance,
-          maxOffsets,
-          maxAbsolute,
-          maxDistanceTimestamp: maxAbsolute
-            ? maxAbsolute.originalTimestamp
-            : "-",
-        };
-      }
-
-      function buildEvent(
-        track,
-        insideStartIndex,
-        lastInsideIndex,
-        exitIndex,
-        exitDistSq,
-        target
-      ) {
-        const { timeline, offsets } = track;
-        const startIndex =
-          Number.isInteger(insideStartIndex) && insideStartIndex >= 0
-            ? insideStartIndex
-            : lastInsideIndex;
-        const lastInside =
-          Number.isInteger(lastInsideIndex) && lastInsideIndex >= 0
-            ? lastInsideIndex
-            : startIndex;
-        const enter = timeline[startIndex] || null;
-        const exit = timeline[exitIndex] || null;
-        const lastInsideEntry = timeline[lastInside] || null;
-        const enterNumeric = enter ? enter.numericTimestamp : NaN;
-        const exitNumeric = exit ? exit.numericTimestamp : NaN;
-        const durationInside = Number.isFinite(enterNumeric) &&
-          Number.isFinite(exitNumeric)
-          ? exitNumeric - enterNumeric
-          : NaN;
-        const exitOffsets = offsets[exitIndex] || { dx: NaN, dy: NaN, dz: NaN };
-        const lastInsideOffsets =
-          offsets[lastInside] || { dx: NaN, dy: NaN, dz: NaN };
-        const dx = exitOffsets.dx - target.x;
-        const dy = exitOffsets.dy - target.y;
-        const dz = exitOffsets.dz - target.z;
-        const exitDistance = Math.sqrt(
-          Number.isFinite(exitDistSq) ? exitDistSq : dx * dx + dy * dy + dz * dz
+        const totalEventCount = analyses.reduce(
+          (sum, analysis) => sum + analysis.events.length,
+          0
         );
-
-        return {
-          enterTimestamp: enter ? enter.originalTimestamp : "-",
-          exitTimestamp: exit ? exit.originalTimestamp : "-",
-          lastInsideTimestamp: lastInsideEntry
-            ? lastInsideEntry.originalTimestamp
-            : "-",
-          enterNumeric,
-          exitNumeric,
-          durationInside,
-          exitDistance,
-          exitOffsets,
-          exitAbsolute: exit
-            ? { x: exit.x, y: exit.y, z: exit.z }
-            : { x: NaN, y: NaN, z: NaN },
-          lastInsideOffsets,
-          lastInsideAbsolute: lastInsideEntry
-            ? { x: lastInsideEntry.x, y: lastInsideEntry.y, z: lastInsideEntry.z }
-            : { x: NaN, y: NaN, z: NaN },
-        };
+        const episodesWithStuck = analyses.filter(
+          (analysis) => analysis.events.length > 0
+        ).length;
+        const insufficientCount = analyses.filter(
+          (analysis) => analysis.insufficientPoints
+        ).length;
+        totalStuckCountBox.textContent = formatNumber(totalEventCount);
+        stuckEpisodeCountBox.textContent = `${formatNumber(
+          episodesWithStuck
+        )} / ${formatNumber(analyses.length)}`;
+        totalTrackCountBox.textContent = formatNumber(analyses.length);
+        insufficientTrackCountBox.textContent = formatNumber(insufficientCount);
       }
 
-      function buildSummaryTableData(analyses, options = {}) {
-        if (!analyses.length) {
-          return { headers: [], rows: [] };
-        }
+      function buildSummaryTableData(analyses, preferences) {
         const headers = [
-          "ファイル",
-          "点数",
-          "開始時刻",
-          "終了時刻",
-          "脱出回数",
-          "最初の脱出 (tick)",
-          "最初の脱出 (sec)",
-          "直前滞在 (tick)",
-          "直前滞在 (sec)",
-          "初回脱出距離",
-          "最大距離",
-          "最大距離時刻",
-          "最大距離オフセット",
+          "トラック",
+          "ポイント数",
+          "STUCK回数",
+          "最初のSTUCK開始",
+          "STUCK総サンプル数",
+          "STUCK総tick",
+          "備考",
         ];
-        const relevant = options.hideNoEscape
-          ? analyses.filter((analysis) => analysis.events.length > 0)
-          : analyses;
-        if (!relevant.length) {
-          return { headers, rows: [] };
-        }
-        const rows = relevant.map((analysis) => {
-          const firstEvent = analysis.events[0] || null;
-          const firstInsideDuration = firstEvent
-            ? firstEvent.durationInside
-            : NaN;
-          const escapeDistance = firstEvent ? firstEvent.exitDistance : NaN;
-          return [
-            analysis.name ?? "",
-            String(analysis.pointCount),
-            analysis.firstTimestamp ?? "-",
-            analysis.lastTimestamp ?? "-",
-            String(analysis.events.length),
-            formatTicks(analysis.firstEscapeFromStart),
-            formatSeconds(analysis.firstEscapeFromStart),
-            formatTicks(firstInsideDuration),
-            formatSeconds(firstInsideDuration),
-            formatDistance(escapeDistance),
-            formatDistance(analysis.maxDistance),
-            analysis.maxDistanceTimestamp ?? "-",
-            formatOffsets(analysis.maxOffsets),
-          ];
-        });
-        return { headers, rows };
-      }
-
-      function buildEventTableData(analyses) {
-        const headers = [
-          "ファイル",
-          "#",
-          "滞在開始",
-          "最後の内側",
-          "脱出時刻",
-          "滞在時間 (tick)",
-          "滞在時間 (sec)",
-          "脱出距離",
-          "最後の内側オフセット",
-          "脱出時オフセット",
-          "脱出時座標 (絶対)",
-        ];
-        const rows = [];
-        analyses.forEach((analysis) => {
-          analysis.events.forEach((event, index) => {
-            rows.push([
-              analysis.name ?? "",
-              String(index + 1),
-              event.enterTimestamp ?? "-",
-              event.lastInsideTimestamp ?? "-",
-              event.exitTimestamp ?? "-",
-              formatTicks(event.durationInside),
-              formatSeconds(event.durationInside),
-              formatDistance(event.exitDistance),
-              formatOffsets(event.lastInsideOffsets),
-              formatOffsets(event.exitOffsets),
-              formatAbsolute(event.exitAbsolute),
-            ]);
+        const rows = analyses
+          .filter(
+            (analysis) =>
+              !preferences.hideNoStuck || analysis.events.length > 0
+          )
+          .map((analysis) => {
+            const firstEvent = analysis.events[0] || null;
+            const note = analysis.insufficientPoints
+              ? `ポイント不足 (>= ${analysis.windowSize})`
+              : "";
+            return [
+              analysis.name,
+              formatNumber(analysis.pointCount),
+              formatNumber(analysis.events.length),
+              firstEvent ? firstEvent.startTimestamp : "-",
+              formatNumber(analysis.totalStuckSamples),
+              formatTicks(analysis.totalStuckTicks),
+              note || "-",
+            ];
           });
-        });
         return { headers, rows };
       }
 
-      function renderSummary(table, options = {}) {
-        if (!table.rows.length) {
-          summaryContainer.innerHTML = options.hideNoEscape
-            ? "<p>脱出したトラックがありません。</p>"
-            : "<p>データがありません。</p>";
+      function renderSummary(table) {
+        if (!table.headers.length) {
+          summaryContainer.innerHTML = "<p>概要を表示できません。</p>";
           return;
         }
         const headerHtml = table.headers
-          .map((header) => `<th>${escapeHtml(String(header ?? ""))}</th>`)
+          .map((label) => `<th>${escapeHtml(label)}</th>`)
           .join("");
         const rowsHtml = table.rows
           .map((row) => {
-            const cells = row
+            const tds = row
               .map((cell) => `<td>${escapeHtml(String(cell ?? ""))}</td>`)
               .join("");
-            return `<tr>${cells}</tr>`;
+            return `<tr>${tds}</tr>`;
           })
           .join("");
         summaryContainer.innerHTML = `
@@ -674,21 +534,56 @@
         `;
       }
 
+      function buildEventsTableData(analyses) {
+        const headers = [
+          "トラック",
+          "開始index",
+          "終了index",
+          "継続サンプル",
+          "開始時刻",
+          "終了時刻",
+          "継続tick",
+          "継続秒",
+          "最大stdX",
+          "最大stdZ",
+        ];
+        const rows = analyses
+          .flatMap((analysis) =>
+            analysis.events.map((event, index) => ({
+              analysis,
+              event,
+              index: index + 1,
+            }))
+          )
+          .map(({ analysis, event, index }) => [
+            `${analysis.name} (#${index})`,
+            formatNumber(event.startIndex),
+            formatNumber(event.endIndexExclusive - 1),
+            formatNumber(event.sampleCount),
+            event.startTimestamp || "-",
+            event.endTimestamp || "-",
+            formatTicks(event.durationTicks),
+            formatSeconds(event.durationTicks),
+            formatStd(event.maxStdX),
+            formatStd(event.maxStdZ),
+          ]);
+        return { headers, rows };
+      }
+
       function renderEvents(table) {
-        if (!table.rows.length) {
-          eventsContainer.innerHTML =
-            "<p>脱出イベントは検出されませんでした。</p>";
+        if (!table.headers.length) {
+          eventsContainer.innerHTML = "<p>STUCKイベントはありません。</p>";
           return;
         }
         const headerHtml = table.headers
-          .map((header) => `<th>${escapeHtml(String(header ?? ""))}</th>`)
+          .map((label) => `<th>${escapeHtml(label)}</th>`)
           .join("");
         const rowsHtml = table.rows
           .map((row) => {
-            const cells = row
+            const tds = row
               .map((cell) => `<td>${escapeHtml(String(cell ?? ""))}</td>`)
               .join("");
-            return `<tr>${cells}</tr>`;
+            return `<tr>${tds}</tr>`;
           })
           .join("");
         eventsContainer.innerHTML = `
@@ -699,6 +594,184 @@
             <tbody>${rowsHtml}</tbody>
           </table>
         `;
+      }
+
+      function analyzeTrack(track, options) {
+        const { timeline } = track;
+        const windowSize = options.windowSize;
+        const threshold = options.stdThreshold;
+        const pointCount = timeline.length;
+        const insufficientPoints = pointCount < windowSize;
+        const events = [];
+
+        if (!timeline.length) {
+          return buildResult();
+        }
+
+        if (insufficientPoints) {
+          return buildResult();
+        }
+
+        const prefixX = buildPrefix(timeline, "x");
+        const prefixX2 = buildPrefixSquared(timeline, "x");
+        const prefixZ = buildPrefix(timeline, "z");
+        const prefixZ2 = buildPrefixSquared(timeline, "z");
+
+        let currentEvent = null;
+
+        for (let endIndex = windowSize; endIndex <= pointCount; endIndex++) {
+          const startIndex = endIndex - windowSize;
+          const stdX = calculateStd(prefixX, prefixX2, startIndex, endIndex);
+          const stdZ = calculateStd(prefixZ, prefixZ2, startIndex, endIndex);
+          const windowStd = Math.max(stdX, stdZ);
+          const isStuck =
+            Number.isFinite(windowStd) && windowStd <= threshold + 1e-9;
+
+          if (isStuck) {
+            if (!currentEvent) {
+              currentEvent = {
+                startIndex,
+                endIndexExclusive: endIndex,
+                maxStdX: stdX,
+                maxStdZ: stdZ,
+              };
+            } else {
+              currentEvent.endIndexExclusive = endIndex;
+              currentEvent.maxStdX = Math.max(currentEvent.maxStdX, stdX);
+              currentEvent.maxStdZ = Math.max(currentEvent.maxStdZ, stdZ);
+            }
+          } else if (currentEvent) {
+            finalizeEvent(currentEvent);
+            currentEvent = null;
+          }
+        }
+
+        if (currentEvent) {
+          finalizeEvent(currentEvent);
+        }
+
+        return buildResult();
+
+        function finalizeEvent(event) {
+          const startEntry = timeline[event.startIndex] || null;
+          const endEntry = timeline[event.endIndexExclusive - 1] || null;
+          const startNumeric = startEntry
+            ? startEntry.numericTimestamp
+            : NaN;
+          const endNumeric = endEntry ? endEntry.numericTimestamp : NaN;
+          const durationTicks =
+            Number.isFinite(startNumeric) && Number.isFinite(endNumeric)
+              ? endNumeric - startNumeric
+              : NaN;
+          events.push({
+            trackId: track.id,
+            trackName: track.name,
+            startIndex: event.startIndex,
+            endIndexExclusive: event.endIndexExclusive,
+            startTimestamp: startEntry
+              ? startEntry.originalTimestamp
+              : "-",
+            endTimestamp: endEntry ? endEntry.originalTimestamp : "-",
+            startNumeric,
+            endNumeric,
+            sampleCount: event.endIndexExclusive - event.startIndex,
+            durationTicks,
+            maxStdX: event.maxStdX,
+            maxStdZ: event.maxStdZ,
+          });
+        }
+
+        function buildResult() {
+          const totalStuckSamples = events.reduce(
+            (sum, event) => sum + event.sampleCount,
+            0
+          );
+          const totalStuckTicks = events.reduce((sum, event) => {
+            if (Number.isFinite(event.durationTicks)) {
+              return sum + event.durationTicks;
+            }
+            return sum;
+          }, 0);
+          return {
+            id: track.id,
+            name: track.name,
+            windowSize,
+            threshold,
+            pointCount,
+            firstTimestamp: timeline[0]
+              ? timeline[0].originalTimestamp
+              : "-",
+            lastTimestamp: timeline[pointCount - 1]
+              ? timeline[pointCount - 1].originalTimestamp
+              : "-",
+            events,
+            totalStuckSamples,
+            totalStuckTicks,
+            insufficientPoints,
+          };
+        }
+      }
+
+      function buildPrefix(timeline, axis) {
+        const prefix = new Array(timeline.length + 1).fill(0);
+        for (let i = 0; i < timeline.length; i++) {
+          prefix[i + 1] = prefix[i] + timeline[i][axis];
+        }
+        return prefix;
+      }
+
+      function buildPrefixSquared(timeline, axis) {
+        const prefix = new Array(timeline.length + 1).fill(0);
+        for (let i = 0; i < timeline.length; i++) {
+          const value = timeline[i][axis];
+          prefix[i + 1] = prefix[i] + value * value;
+        }
+        return prefix;
+      }
+
+      function calculateStd(prefix, prefixSquared, startIndex, endIndex) {
+        const count = endIndex - startIndex;
+        if (count <= 0) {
+          return NaN;
+        }
+        const sum = prefix[endIndex] - prefix[startIndex];
+        const sumSq = prefixSquared[endIndex] - prefixSquared[startIndex];
+        const mean = sum / count;
+        const variance = sumSq / count - mean * mean;
+        return Math.sqrt(Math.max(0, variance));
+      }
+
+      function formatNumber(value, fractionDigits = 0) {
+        if (!Number.isFinite(value)) {
+          return "-";
+        }
+        if (fractionDigits <= 0) {
+          return String(Math.round(value));
+        }
+        const fixed = value.toFixed(fractionDigits);
+        const numeric = Number(fixed);
+        return Number.isInteger(numeric) ? String(numeric) : fixed;
+      }
+
+      function formatTicks(value) {
+        if (!Number.isFinite(value)) {
+          return "-";
+        }
+        return formatNumber(value, 2);
+      }
+
+      function formatSeconds(ticks) {
+        if (!Number.isFinite(ticks)) {
+          return "-";
+        }
+        return formatNumber(ticks / 20, 2);
+      }
+
+      function formatStd(value) {
+        if (!Number.isFinite(value)) {
+          return "-";
+        }
+        return formatNumber(value, 3);
       }
 
       function exportCsv(filename, table) {
@@ -736,62 +809,6 @@
         setTimeout(() => {
           URL.revokeObjectURL(url);
         }, 1000);
-      }
-
-      function formatTicks(value) {
-        if (!Number.isFinite(value)) {
-          return "-";
-        }
-        return formatNumber(value, 2);
-      }
-
-      function formatSeconds(value) {
-        if (!Number.isFinite(value)) {
-          return "-";
-        }
-        return formatNumber(value / 20, 2);
-      }
-
-      function formatDistance(value) {
-        if (!Number.isFinite(value)) {
-          return "-";
-        }
-        return formatNumber(value, 3);
-      }
-
-      function formatOffsets(offsets) {
-        if (
-          !offsets ||
-          !["dx", "dy", "dz"].every((key) => Number.isFinite(offsets[key]))
-        ) {
-          return "-";
-        }
-        return `(${formatNumber(offsets.dx, 2)}, ${formatNumber(
-          offsets.dy,
-          2
-        )}, ${formatNumber(offsets.dz, 2)})`;
-      }
-
-      function formatAbsolute(position) {
-        if (
-          !position ||
-          !["x", "y", "z"].every((key) => Number.isFinite(position[key]))
-        ) {
-          return "-";
-        }
-        return `(${formatNumber(position.x, 2)}, ${formatNumber(
-          position.y,
-          2
-        )}, ${formatNumber(position.z, 2)})`;
-      }
-
-      function formatNumber(value, fractionDigits) {
-        if (!Number.isFinite(value)) {
-          return "-";
-        }
-        const fixed = value.toFixed(fractionDigits);
-        const numeric = Number(fixed);
-        return Number.isInteger(numeric) ? String(numeric) : fixed;
       }
 
       function escapeHtml(value) {
@@ -856,6 +873,7 @@
         if (!rows.length) {
           return [];
         }
+
         let headerIndex = rows.findIndex((cols) =>
           cols.some((value) => value.length > 0)
         );
@@ -1006,18 +1024,6 @@
           return { display: fallbackKey, numeric: index };
         }
         return { display: `#${index}`, numeric: index };
-      }
-
-      function buildOffsets(rows) {
-        const [first] = rows;
-        if (!first) {
-          return [];
-        }
-        return rows.map((row) => ({
-          dx: row.x - first.x,
-          dy: row.y - first.y,
-          dz: row.z - first.z,
-        }));
       }
     </script>
   </body>

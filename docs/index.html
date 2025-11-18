@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <title>Coordinate Timeline Viewer</title>
+    <title>座標タイムラインビューア</title>
     <style>
       :root {
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -282,14 +282,14 @@
   </head>
   <body>
     <div class="panel">
-      <h1>Coordinate Timeline Viewer</h1>
+      <h1>座標タイムラインビューア</h1>
       <p>
-        Select one or more JSON files containing timestamped coordinates (x, y,
-        z). The first point in each file is treated as the origin at (0, 0, 0).
+        タイムスタンプ付きの座標 (x, y, z) を含む JSON ファイルを 1 つ以上選択してください。
+        各ファイルの最初の点を原点 (0, 0, 0) として扱います。
       </p>
       <div class="loader-area">
         <label>
-          Load JSON files
+          JSONファイルを読み込む
           <input
             type="file"
             id="fileInput"
@@ -298,7 +298,7 @@
           />
         </label>
         <label>
-          Load JSON folder
+          JSONフォルダを読み込む
           <input
             type="file"
             id="folderInput"
@@ -309,18 +309,21 @@
         </label>
       </div>
       <p class="note">
-        The folder picker works best in Chromium-based browsers (Chrome, Edge,
-        Arc). Safari and Firefox may not fully support automatic folder loading.
+        フォルダ選択は Chromium 系ブラウザ (Chrome / Edge / Arc など) での動作が安定しています。
+        Safari や Firefox ではフォルダ一括読み込みに対応していない場合があります。
       </p>
       <div id="error"></div>
     </div>
 
     <div class="panel">
-      <h2>Additional Reports</h2>
+      <h2>追加レポート</h2>
       <p>
-        Need a table of escape timings? Open&nbsp;
-        <a href="./escape-report/index.html">Escape Time Report</a>
-        to load CSV/JSON logs and list when tracks left a radius.
+        <a href="./escape-report/index.html">エスケープレポート</a>では、CSV / JSON
+        の軌跡を読み込み、指定した中心と半径からいつ脱出したかを一覧で確認できます。
+      </p>
+      <p>
+        <a href="./escape-report/stuck-report.html">STUCKレポート</a>では、x-z 平面の
+        変動を 750 step ウィンドウで解析し、標準偏差が閾値以下になった停滞区間を集計できます。
       </p>
     </div>
 
@@ -329,7 +332,7 @@
         <div class="left-col">
           <canvas id="plot" width="960" height="480"></canvas>
           <div class="controls">
-            <label for="position">Frame</label>
+            <label for="position">フレーム</label>
             <input
               type="range"
               id="position"
@@ -339,42 +342,42 @@
               step="1"
               disabled
             />
-            <button id="playPause" disabled>Play</button>
+            <button id="playPause" disabled>再生</button>
           </div>
           <div class="zoom-toolbar">
-            <span id="zoomDisplay">Zoom: 100%</span>
+            <span id="zoomDisplay">ズーム: 100%</span>
             <div class="zoom-buttons">
-              <button type="button" id="zoomIn">Zoom In</button>
-              <button type="button" id="zoomOut">Zoom Out</button>
-              <button type="button" id="zoomReset">Fit View</button>
+              <button type="button" id="zoomIn">ズームイン</button>
+              <button type="button" id="zoomOut">ズームアウト</button>
+              <button type="button" id="zoomReset">全体表示</button>
             </div>
           </div>
           <div class="axis-toolbar">
-            <label for="axisMode">Projection</label>
+            <label for="axisMode">投影モード</label>
             <select id="axisMode">
-              <option value="xy">X vs Y</option>
-              <option value="xz">X vs Z</option>
+              <option value="xy">X-Y 平面</option>
+              <option value="xz">X-Z 平面</option>
             </select>
           </div>
           <div class="reach-toolbar">
             <label class="reach-toggle">
               <input type="checkbox" id="reachToggle" />
-              Escape distance counter
+              脱出距離カウンタ
             </label>
             <label>
-              Center X (dx)
+              中心 X (dx)
               <input type="number" id="reachTargetX" step="0.5" value="0" />
             </label>
             <label>
-              Center Y (dy)
+              中心 Y (dy)
               <input type="number" id="reachTargetY" step="0.5" value="0" />
             </label>
             <label>
-              Center Z (dz)
+              中心 Z (dz)
               <input type="number" id="reachTargetZ" step="0.5" value="0" />
             </label>
             <label>
-              Escape radius (blocks)
+              脱出半径 (ブロック)
               <input
                 type="number"
                 id="reachRadius"
@@ -389,34 +392,34 @@
             <div class="export-group">
               <label>
                 <input type="checkbox" id="showPathsToggle" checked />
-                Path
+                軌跡
               </label>
               <label>
                 <input type="checkbox" id="showCircleToggle" checked />
-                Escape circle
+                脱出円
               </label>
             </div>
             <div class="export-group">
               <label>
                 <input type="checkbox" id="cropToggle" />
-                Crop square
+                正方形トリミング
               </label>
               <label>
-                Size (blocks)
+                サイズ (ブロック)
                 <input type="number" id="cropSize" value="50" min="1" step="1" />
               </label>
               <label>
-                Center
+                中心
                 <select id="cropCenterMode">
-                  <option value="origin">Track origin</option>
-                  <option value="escape">Escape target</option>
+                  <option value="origin">トラック原点</option>
+                  <option value="escape">脱出ターゲット</option>
                 </select>
               </label>
             </div>
             <div class="export-group">
-              <button type="button" id="centerView">Center view</button>
-              <button type="button" id="exportPng">Export PNG</button>
-              <button type="button" id="exportSvg">Export SVG</button>
+              <button type="button" id="centerView">表示を中央に</button>
+              <button type="button" id="exportPng">PNG出力</button>
+              <button type="button" id="exportSvg">SVG出力</button>
             </div>
           </div>
           <div id="details">
@@ -427,7 +430,7 @@
           </div>
         </div>
         <div class="right-col">
-          <h2>Tracks</h2>
+          <h2>トラック一覧</h2>
           <div id="trackList"></div>
         </div>
       </div>
@@ -723,7 +726,7 @@
           return;
         }
         if (!tracks.length) {
-          reachSummary.textContent = "Escaped: 0/0";
+          reachSummary.textContent = "脱出済み: 0/0";
           return;
         }
         let visibleReached = 0;
@@ -740,9 +743,9 @@
             }
           }
         });
-        const totalLabel = `${visibleReached}/${visibleTotal || 0} visible`;
-        const allLabel = `${totalReached}/${tracks.length} total`;
-        reachSummary.textContent = `Escaped: ${totalLabel} • ${allLabel}`;
+        const totalLabel = `表示 ${visibleReached}/${visibleTotal || 0}`;
+        const allLabel = `全体 ${totalReached}/${tracks.length}`;
+        reachSummary.textContent = `脱出済み: ${totalLabel} • ${allLabel}`;
       }
 
       function prepareExportSnapshot() {
@@ -811,12 +814,12 @@
 
       function exportPNG() {
         if (!tracks.length) {
-          errorBox.textContent = "No data loaded to export.";
+          errorBox.textContent = "エクスポートできるデータが読み込まれていません。";
           return;
         }
         const snapshot = prepareExportSnapshot();
         if (!snapshot) {
-          errorBox.textContent = "Nothing visible to export.";
+          errorBox.textContent = "表示中のデータがありません。";
           return;
         }
         drawFrame(snapshot.clampedIndex);
@@ -824,7 +827,7 @@
         if (canvas.toBlob) {
           canvas.toBlob((blob) => {
             if (!blob) {
-              errorBox.textContent = "Failed to create PNG blob.";
+              errorBox.textContent = "PNGデータの生成に失敗しました。";
               return;
             }
             downloadBlob(blob, filename);
@@ -837,12 +840,12 @@
 
       function exportSVG() {
         if (!tracks.length) {
-          errorBox.textContent = "No data loaded to export.";
+          errorBox.textContent = "エクスポートできるデータが読み込まれていません。";
           return;
         }
         const snapshot = prepareExportSnapshot();
         if (!snapshot) {
-          errorBox.textContent = "Nothing visible to export.";
+          errorBox.textContent = "表示中のデータがありません。";
           return;
         }
         const svgString = buildSVGString(snapshot);
@@ -990,7 +993,7 @@
           `<circle cx="${origin.x.toFixed(2)}" cy="${origin.y.toFixed(2)}" r="8" fill="none" stroke="#2c3e50" stroke-width="2"/>`
         );
         pieces.push(
-          `<text x="${(origin.x + 10).toFixed(2)}" y="${(origin.y - 8).toFixed(2)}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#2c3e50">origin</text>`
+          `<text x="${(origin.x + 10).toFixed(2)}" y="${(origin.y - 8).toFixed(2)}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="12" fill="#2c3e50">原点</text>`
         );
 
         if (clipId) {
@@ -1166,7 +1169,7 @@
           return;
         }
         const percent = Math.round(viewState.zoom * 100);
-        zoomDisplay.textContent = `Zoom: ${percent}%`;
+        zoomDisplay.textContent = `ズーム: ${percent}%`;
       }
 
       function centerView() {
@@ -1209,7 +1212,7 @@
           file.name.toLowerCase().endsWith(".json")
         );
         if (!files.length) {
-          errorBox.textContent = "No JSON files found in the selection.";
+          errorBox.textContent = "選択内に JSON ファイルが見つかりませんでした。";
           return;
         }
 
@@ -1222,7 +1225,7 @@
             const raw = JSON.parse(text);
             const timeline = extractTimeline(raw);
             if (!timeline.length) {
-              failed.push(file.name + " (no coordinates)");
+              failed.push(file.name + " (座標なし)");
               continue;
             }
             parsedTracks.push({
@@ -1233,13 +1236,13 @@
             });
           } catch (err) {
             console.error("Failed to parse", file.name, err);
-            failed.push(file.name + " (parse error)");
+            failed.push(file.name + " (解析エラー)");
           }
         }
 
         if (!parsedTracks.length) {
           viewer.style.display = "none";
-          errorBox.textContent = "Could not load any of the selected files.";
+          errorBox.textContent = "選択したファイルを読み込めませんでした。";
           return;
         }
 
@@ -1264,7 +1267,9 @@
         viewer.style.display = "block";
 
         if (failed.length) {
-          errorBox.textContent = `Skipped files: ${failed.join(", ")}`;
+          errorBox.textContent = `読み込みをスキップ: ${failed.join(", ")}`;
+        } else {
+          errorBox.textContent = "";
         }
       }
 
@@ -1301,10 +1306,10 @@
           const soloBtn = document.createElement("button");
           soloBtn.type = "button";
           const isSoloed = soloMode.enabled && soloMode.trackId === track.id;
-          soloBtn.textContent = isSoloed ? "Unfocus" : "Focus";
+          soloBtn.textContent = isSoloed ? "解除" : "単独表示";
           soloBtn.title = isSoloed
-            ? "Show previously selected tracks"
-            : "Show only this track";
+            ? "以前の選択状態に戻す"
+            : "このトラックだけ表示";
           soloBtn.addEventListener("click", () => {
             if (isSoloed) {
               exitSoloMode();
@@ -1324,12 +1329,12 @@
           const meta = document.createElement("div");
           meta.className = "track-meta";
           const covers = track.endsEarly
-            ? "full timeline: false"
-            : "full timeline: true";
+            ? "全タイムライン: いいえ"
+            : "全タイムライン: はい";
           const reachLabel = reachOptions.enabled
-            ? ` • escaped radius: ${track.escapedRadius ? "yes" : "no"}`
+            ? ` • 脱出判定: ${track.escapedRadius ? "はい" : "いいえ"}`
             : "";
-          meta.textContent = `${track.timeline.length} points • ${covers}${reachLabel}`;
+          meta.textContent = `${track.timeline.length} 点 • ${covers}${reachLabel}`;
           if (reachOptions.enabled) {
             row.style.backgroundColor = track.escapedRadius
               ? "rgba(41, 128, 185, 0.14)"
@@ -1474,7 +1479,7 @@
           return;
         }
         isPlaying = true;
-        playPause.textContent = "Pause";
+        playPause.textContent = "一時停止";
         const startIndex = Number(slider.value);
         animateFrom(startIndex);
       }
@@ -1501,7 +1506,7 @@
         }
         isPlaying = false;
         if (resetButton) {
-          playPause.textContent = "Play";
+          playPause.textContent = "再生";
         }
       }
 
@@ -1532,7 +1537,7 @@
         if (!totalFrames) {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           updateDetails(null, null, null, null);
-          playPause.textContent = "Play";
+          playPause.textContent = "再生";
           updateZoomDisplay();
           lastRenderContext = null;
           return;
@@ -1550,7 +1555,7 @@
         if (!visibleTracks.length || !active) {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           updateDetails(null, null, null, null);
-          playPause.textContent = isPlaying ? "Pause" : "Play";
+          playPause.textContent = isPlaying ? "一時停止" : "再生";
           updateZoomDisplay();
           lastRenderContext = null;
           return;
@@ -1586,7 +1591,7 @@
         const offset = active.offsets[safeIndex];
         updateDetails(active, safeIndex, entry, offset);
 
-        playPause.textContent = isPlaying ? "Pause" : "Play";
+        playPause.textContent = isPlaying ? "一時停止" : "再生";
         updateZoomDisplay();
       }
 
@@ -1712,7 +1717,7 @@
         ctx.stroke();
         ctx.fillStyle = "#2c3e50";
         ctx.font = "12px system-ui";
-        ctx.fillText("origin", origin.x + 10, origin.y - 8);
+        ctx.fillText("原点", origin.x + 10, origin.y - 8);
 
         if (clippingApplied) {
           ctx.restore();
@@ -2034,24 +2039,24 @@
 
       function updateDetails(track, index, entry, offset) {
         if (!track || !entry || !offset) {
-          trackBox.textContent = "Track: (none)";
-          timestampBox.textContent = "Timestamp: -";
-          absoluteBox.textContent = "Absolute: -";
-          relativeBox.textContent = "Offset: -";
+          trackBox.textContent = "トラック: (なし)";
+          timestampBox.textContent = "タイムスタンプ: -";
+          absoluteBox.textContent = "絶対座標: -";
+          relativeBox.textContent = "相対座標: -";
           return;
         }
         const coverageLabel = track.endsEarly
-          ? "full timeline: false"
-          : "full timeline: true";
+          ? "全タイムライン: いいえ"
+          : "全タイムライン: はい";
         const stuckLabel = isStuckAt(track, index)
-          ? "stuck: true"
-          : "stuck: false";
-        trackBox.textContent = `Track: ${track.name} (${track.timeline.length} points, ${coverageLabel}, ${stuckLabel})`;
-        timestampBox.textContent = `Timestamp: ${entry.originalTimestamp}`;
-        absoluteBox.textContent = `Absolute: x=${entry.x.toFixed(
+          ? "STUCK: あり"
+          : "STUCK: なし";
+        trackBox.textContent = `トラック: ${track.name} (${track.timeline.length} 点, ${coverageLabel}, ${stuckLabel})`;
+        timestampBox.textContent = `タイムスタンプ: ${entry.originalTimestamp}`;
+        absoluteBox.textContent = `絶対座標: x=${entry.x.toFixed(
           2
         )}, y=${entry.y.toFixed(2)}, z=${entry.z.toFixed(2)}`;
-        relativeBox.textContent = `Offset: dx=${offset.dx.toFixed(
+        relativeBox.textContent = `相対座標: dx=${offset.dx.toFixed(
           2
         )}, dy=${offset.dy.toFixed(2)}, dz=${offset.dz.toFixed(2)}`;
       }
