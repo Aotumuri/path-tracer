@@ -245,6 +245,10 @@
           <strong id="totalEscapeCount">-</strong>
         </div>
         <div class="stat-card">
+          <span>失敗回数</span>
+          <strong id="totalFailureCount">-</strong>
+        </div>
+        <div class="stat-card">
           <span>STUCK経験トラック数</span>
           <strong id="stuckEpisodeCount">-</strong>
         </div>
@@ -287,6 +291,7 @@
       const hideNoStuckCheckbox = document.getElementById("hideNoStuck");
       const totalStuckCountBox = document.getElementById("totalStuckCount");
       const totalEscapeCountBox = document.getElementById("totalEscapeCount");
+      const totalFailureCountBox = document.getElementById("totalFailureCount");
       const stuckEpisodeCountBox = document.getElementById("stuckEpisodeCount");
       const totalTrackCountBox = document.getElementById("totalTrackCount");
       const insufficientTrackCountBox = document.getElementById(
@@ -458,6 +463,7 @@
         if (!analyses || !analyses.length) {
           totalStuckCountBox.textContent = "-";
           totalEscapeCountBox.textContent = "-";
+          totalFailureCountBox.textContent = "-";
           stuckEpisodeCountBox.textContent = "-";
           totalTrackCountBox.textContent = "-";
           insufficientTrackCountBox.textContent = "-";
@@ -471,6 +477,10 @@
           (sum, analysis) => sum + analysis.escapeCount,
           0
         );
+        const totalFailureCount = analyses.reduce(
+          (sum, analysis) => sum + analysis.failureCount,
+          0
+        );
         const episodesWithStuck = analyses.filter(
           (analysis) => analysis.events.length > 0
         ).length;
@@ -479,6 +489,7 @@
         ).length;
         totalStuckCountBox.textContent = formatNumber(totalEventCount);
         totalEscapeCountBox.textContent = formatNumber(totalEscapeCount);
+        totalFailureCountBox.textContent = formatNumber(totalFailureCount);
         stuckEpisodeCountBox.textContent = `${formatNumber(
           episodesWithStuck
         )} / ${formatNumber(analyses.length)}`;
@@ -492,6 +503,7 @@
           "ポイント数",
           "STUCK回数",
           "脱出回数",
+          "失敗回数",
           "最初のSTUCK開始",
           "STUCK総サンプル数",
           "STUCK総tick",
@@ -512,6 +524,7 @@
               formatNumber(analysis.pointCount),
               formatNumber(analysis.events.length),
               formatNumber(analysis.escapeCount),
+              formatNumber(analysis.failureCount),
               firstEvent ? firstEvent.startTimestamp : "-",
               formatNumber(analysis.totalStuckSamples),
               formatTicks(analysis.totalStuckTicks),
@@ -654,18 +667,18 @@
               currentEvent.maxStdZ = Math.max(currentEvent.maxStdZ, stdZ);
             }
           } else if (currentEvent) {
-            finalizeEvent(currentEvent, true);
+            finalizeEvent(currentEvent, false);
             currentEvent = null;
           }
         }
 
         if (currentEvent) {
-          finalizeEvent(currentEvent, false);
+          finalizeEvent(currentEvent, true);
         }
 
         return buildResult();
 
-        function finalizeEvent(event, escapedFromStuck) {
+        function finalizeEvent(event, failedAtEnd) {
           const startEntry = timeline[event.startIndex] || null;
           const endEntry = timeline[event.endIndexExclusive - 1] || null;
           const startNumeric = startEntry
@@ -691,7 +704,7 @@
             durationTicks,
             maxStdX: event.maxStdX,
             maxStdZ: event.maxStdZ,
-            escapedFromStuck,
+            failedAtEnd,
           });
         }
 
@@ -706,8 +719,12 @@
             }
             return sum;
           }, 0);
+          const failureCount = events.reduce(
+            (sum, event) => sum + (event.failedAtEnd ? 1 : 0),
+            0
+          );
           const escapeCount = events.reduce(
-            (sum, event) => sum + (event.escapedFromStuck ? 1 : 0),
+            (sum, event) => sum + (event.failedAtEnd ? 0 : 1),
             0
           );
           return {
@@ -724,6 +741,7 @@
               : "-",
             events,
             escapeCount,
+            failureCount,
             totalStuckSamples,
             totalStuckTicks,
             insufficientPoints,
