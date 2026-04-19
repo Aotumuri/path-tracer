@@ -241,6 +241,10 @@
           <strong id="totalStuckCount">-</strong>
         </div>
         <div class="stat-card">
+          <span>脱出回数</span>
+          <strong id="totalEscapeCount">-</strong>
+        </div>
+        <div class="stat-card">
           <span>STUCK経験トラック数</span>
           <strong id="stuckEpisodeCount">-</strong>
         </div>
@@ -282,6 +286,7 @@
       const exportEventsButton = document.getElementById("exportEvents");
       const hideNoStuckCheckbox = document.getElementById("hideNoStuck");
       const totalStuckCountBox = document.getElementById("totalStuckCount");
+      const totalEscapeCountBox = document.getElementById("totalEscapeCount");
       const stuckEpisodeCountBox = document.getElementById("stuckEpisodeCount");
       const totalTrackCountBox = document.getElementById("totalTrackCount");
       const insufficientTrackCountBox = document.getElementById(
@@ -452,6 +457,7 @@
       function updateOverviewStats(analyses) {
         if (!analyses || !analyses.length) {
           totalStuckCountBox.textContent = "-";
+          totalEscapeCountBox.textContent = "-";
           stuckEpisodeCountBox.textContent = "-";
           totalTrackCountBox.textContent = "-";
           insufficientTrackCountBox.textContent = "-";
@@ -461,6 +467,10 @@
           (sum, analysis) => sum + analysis.events.length,
           0
         );
+        const totalEscapeCount = analyses.reduce(
+          (sum, analysis) => sum + analysis.escapeCount,
+          0
+        );
         const episodesWithStuck = analyses.filter(
           (analysis) => analysis.events.length > 0
         ).length;
@@ -468,6 +478,7 @@
           (analysis) => analysis.insufficientPoints
         ).length;
         totalStuckCountBox.textContent = formatNumber(totalEventCount);
+        totalEscapeCountBox.textContent = formatNumber(totalEscapeCount);
         stuckEpisodeCountBox.textContent = `${formatNumber(
           episodesWithStuck
         )} / ${formatNumber(analyses.length)}`;
@@ -480,6 +491,7 @@
           "トラック",
           "ポイント数",
           "STUCK回数",
+          "脱出回数",
           "最初のSTUCK開始",
           "STUCK総サンプル数",
           "STUCK総tick",
@@ -499,6 +511,7 @@
               analysis.name,
               formatNumber(analysis.pointCount),
               formatNumber(analysis.events.length),
+              formatNumber(analysis.escapeCount),
               firstEvent ? firstEvent.startTimestamp : "-",
               formatNumber(analysis.totalStuckSamples),
               formatTicks(analysis.totalStuckTicks),
@@ -641,18 +654,18 @@
               currentEvent.maxStdZ = Math.max(currentEvent.maxStdZ, stdZ);
             }
           } else if (currentEvent) {
-            finalizeEvent(currentEvent);
+            finalizeEvent(currentEvent, true);
             currentEvent = null;
           }
         }
 
         if (currentEvent) {
-          finalizeEvent(currentEvent);
+          finalizeEvent(currentEvent, false);
         }
 
         return buildResult();
 
-        function finalizeEvent(event) {
+        function finalizeEvent(event, escapedFromStuck) {
           const startEntry = timeline[event.startIndex] || null;
           const endEntry = timeline[event.endIndexExclusive - 1] || null;
           const startNumeric = startEntry
@@ -678,6 +691,7 @@
             durationTicks,
             maxStdX: event.maxStdX,
             maxStdZ: event.maxStdZ,
+            escapedFromStuck,
           });
         }
 
@@ -692,6 +706,10 @@
             }
             return sum;
           }, 0);
+          const escapeCount = events.reduce(
+            (sum, event) => sum + (event.escapedFromStuck ? 1 : 0),
+            0
+          );
           return {
             id: track.id,
             name: track.name,
@@ -705,6 +723,7 @@
               ? timeline[pointCount - 1].originalTimestamp
               : "-",
             events,
+            escapeCount,
             totalStuckSamples,
             totalStuckTicks,
             insufficientPoints,
